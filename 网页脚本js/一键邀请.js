@@ -8,10 +8,9 @@
     ".QuestionInvitation-content .QuestionMainAction.Button"
   );
 
-  moreBtnEle.click();
+  moreBtnEle?.click();
 
-
-  wait(500)
+  wait(500);
 
   // 选择所有符合选择器的按钮
   const btnElements = document.querySelectorAll(
