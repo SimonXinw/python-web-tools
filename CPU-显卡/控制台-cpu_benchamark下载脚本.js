@@ -11,29 +11,46 @@
   }
 
   // 获取主列表容器
-  const root = document.getElementById("main-count-list-data");
+  const root = document.getElementById("mark");
+
   if (!root) {
-    alert("未找到id为 main-count-list-data 的元素");
-    return;
+    return alert("未找到 root 元素");
   }
 
   // 采集数据
-  const rows = Array.from(root.querySelectorAll(".main-count-list"));
-  const data = rows.map((row) => {
-    const num =
-      row.querySelector(".main-count-list-num")?.textContent.trim() || "";
-    const title =
-      row.querySelector(".main-count-list-code-p")?.textContent.trim() || "";
-    const score =
-      parseFloat(
-        row.querySelector(".main-count-list-code-score")?.textContent.trim()
-      ) || "";
+  const rows = Array.from(root.querySelectorAll(".chartlist li"));
+
+  rows.forEach((row) => {
+    row.querySelector(".more_details")?.click();
+  });
+
+  await new Promise((resolve) => setTimeout(resolve, 320));
+
+  // 采集新数据
+  const newRows = Array.from(root.querySelectorAll(".chartlist li"));
+
+  const data = newRows.map((row) => {
+    // 提取 Rank: 后面的数字
+    let num = "";
+    const rowDetails = row.querySelector(".row_details");
+
+    if (rowDetails) {
+      const match = rowDetails.innerHTML.match(/Rank:\s*(\d+)/);
+      num = match ? match[1] : "";
+    }
+
+    const title = row.querySelector(".prdname")?.textContent.trim() || "";
+
+    // 兼容带逗号的数字格式
+    const scoreText = row.querySelector(".count")?.textContent.trim().replace(/,/g, "");
+    
+    const score = scoreText ? parseFloat(scoreText) : "";
+
     return { 排名: num, 标题: title, 分数: score };
   });
 
   if (data.length === 0) {
-    alert("没有采集到数据");
-    return;
+    return alert("没有采集到数据");
   }
 
   // 生成sheet
