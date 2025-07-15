@@ -44,7 +44,7 @@
   // 创建下载
   const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
   const blob = new Blob([wbout], { type: "application/octet-stream" });
-  const filename = "主列表数据.xlsx";
+  const filename = "鲁大师显卡排行数据.xlsx";
 
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
