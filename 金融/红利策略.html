@@ -1,0 +1,1146 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>易方达中证红利ETF · 年线策略</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+        :root {
+            --red: #e53e3e;
+            --green: #22a959;
+            --blue: #2563eb;
+            --gold: #d4a017;
+            --purple: #7c3aed;
+            --bg: #f0f4f8;
+            --card: #ffffff;
+            --text: #1a202c;
+            --light: #718096;
+            --border: #e2e8f0;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, "Microsoft YaHei", sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding: 20px;
+            line-height: 1.6;
+        }
+
+        /* ── Header ── */
+        .header {
+            background: linear-gradient(135deg, #1a365d, #2563eb);
+            color: #fff;
+            border-radius: 16px;
+            padding: 24px 32px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 16px;
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 700;
+        }
+
+        .header .meta {
+            font-size: 0.85rem;
+            opacity: 0.75;
+            margin-top: 4px;
+        }
+
+        /* ── Header 右侧策略摘要 ── */
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .header-badge {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 10px;
+            padding: 10px 18px;
+            text-align: center;
+            min-width: 90px;
+        }
+
+        .header-badge .hb-label {
+            font-size: 0.72rem;
+            opacity: 0.8;
+            margin-bottom: 2px;
+        }
+
+        .header-badge .hb-value {
+            font-size: 1.8rem;
+            font-weight: 800;
+            line-height: 1;
+        }
+
+        .header-strategy {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 12px;
+            padding: 12px 18px;
+            min-width: 240px;
+            display: none;
+            transition: background 0.3s, border-color 0.3s;
+        }
+
+        /* 区间主题色 */
+        .header-strategy.hs-extreme-low {
+            background: rgba(22, 163, 74, 0.25);
+            border-color: rgba(22, 163, 74, 0.6);
+        }
+
+        .header-strategy.hs-low {
+            background: rgba(34, 197, 94, 0.2);
+            border-color: rgba(34, 197, 94, 0.5);
+        }
+
+        .header-strategy.hs-neutral {
+            background: rgba(202, 138, 4, 0.2);
+            border-color: rgba(202, 138, 4, 0.5);
+        }
+
+        .header-strategy.hs-high {
+            background: rgba(234, 88, 12, 0.22);
+            border-color: rgba(234, 88, 12, 0.55);
+        }
+
+        .header-strategy.hs-extreme-high {
+            background: rgba(229, 62, 62, 0.25);
+            border-color: rgba(229, 62, 62, 0.6);
+        }
+
+        .header-strategy .hs-zone {
+            font-size: 0.95rem;
+            font-weight: 700;
+            margin-bottom: 8px;
+            letter-spacing: 0.2px;
+        }
+
+        .header-strategy .hs-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 6px;
+            font-size: 0.8rem;
+            line-height: 1.5;
+            margin-bottom: 4px;
+            opacity: 0.95;
+        }
+
+        .header-strategy .hs-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .header-strategy .hs-icon {
+            flex-shrink: 0;
+        }
+
+        /* 金额颜色：买入绿，卖出红 */
+        .hs-amt-buy {
+            font-weight: 800;
+            font-size: 0.9rem;
+            color: #86efac;
+        }
+
+        .hs-amt-sell {
+            font-weight: 800;
+            font-size: 0.9rem;
+            color: #fca5a5;
+        }
+
+        .hs-amt-hold {
+            font-weight: 800;
+            font-size: 0.9rem;
+            color: #fde68a;
+        }
+
+        /* ── Upload fallback ── */
+        .upload-zone {
+            display: none;
+            text-align: center;
+            padding: 40px;
+            background: var(--card);
+            border-radius: 16px;
+            border: 2px dashed #cbd5e0;
+            cursor: pointer;
+            margin-bottom: 20px;
+            transition: border-color 0.2s;
+        }
+
+        .upload-zone:hover {
+            border-color: var(--blue);
+        }
+
+        .upload-zone input {
+            display: none;
+        }
+
+        .upload-zone .icon {
+            font-size: 2.5rem;
+            margin-bottom: 12px;
+        }
+
+        .upload-zone p {
+            color: var(--light);
+            line-height: 1.8;
+        }
+
+        .upload-zone strong {
+            color: var(--blue);
+        }
+
+        /* ── Loading ── */
+        .loading {
+            text-align: center;
+            padding: 60px;
+            color: var(--light);
+            font-size: 1rem;
+        }
+
+        .loading.hidden {
+            display: none;
+        }
+
+        /* ── Card base ── */
+        .card {
+            background: var(--card);
+            border-radius: 16px;
+            padding: 24px;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+            margin-bottom: 20px;
+            border: 1px solid var(--border);
+        }
+
+        .card h2 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            margin-bottom: 16px;
+            color: var(--text);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* ── Stats row ── */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(155px, 1fr));
+            gap: 14px;
+            margin-bottom: 20px;
+        }
+
+        .stat-card {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 16px 18px;
+            box-shadow: 0 1px 4px rgba(0, 0, 0, 0.06);
+            border-left: 4px solid var(--border);
+            border-top: 1px solid var(--border);
+        }
+
+        .stat-card.red {
+            border-left-color: var(--red);
+        }
+
+        .stat-card.green {
+            border-left-color: var(--green);
+        }
+
+        .stat-card.blue {
+            border-left-color: var(--blue);
+        }
+
+        .stat-card.gold {
+            border-left-color: var(--gold);
+        }
+
+        .stat-card.purple {
+            border-left-color: var(--purple);
+        }
+
+        .stat-card .s-label {
+            font-size: 0.75rem;
+            color: var(--light);
+            margin-bottom: 5px;
+            letter-spacing: 0.3px;
+        }
+
+        .stat-card .s-value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+
+        .stat-card .s-sub {
+            font-size: 0.78rem;
+            color: var(--light);
+            margin-top: 5px;
+        }
+
+        .c-red {
+            color: var(--red);
+        }
+
+        .c-green {
+            color: var(--green);
+        }
+
+        .c-blue {
+            color: var(--blue);
+        }
+
+        .c-gold {
+            color: var(--gold);
+        }
+
+        /* ── Charts ── */
+        #mainChart {
+            width: 100%;
+            height: 420px;
+        }
+
+        #deviationChart {
+            width: 100%;
+            height: 180px;
+        }
+
+        /* ── Strategy zone banner ── */
+        .zone-banner {
+            border-radius: 12px;
+            padding: 18px 22px;
+            margin-bottom: 20px;
+            border-left: 6px solid #ccc;
+        }
+
+        .zone-banner.zone-extreme-low {
+            background: #f0fdf4;
+            border-left-color: #16a34a;
+        }
+
+        .zone-banner.zone-low {
+            background: #dcfce7;
+            border-left-color: #22c55e;
+        }
+
+        .zone-banner.zone-neutral {
+            background: #fefce8;
+            border-left-color: #ca8a04;
+        }
+
+        .zone-banner.zone-high {
+            background: #fff7ed;
+            border-left-color: #ea580c;
+        }
+
+        .zone-banner.zone-extreme-high {
+            background: #fef2f2;
+            border-left-color: var(--red);
+        }
+
+        .zone-banner .zone-title {
+            font-size: 1.25rem;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .zone-banner .zone-dev {
+            font-size: 2rem;
+            font-weight: 800;
+            line-height: 1;
+            margin-bottom: 12px;
+        }
+
+        .zone-banner .zone-actions {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .zone-banner .action-row {
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            padding: 10px 14px;
+            background: rgba(255, 255, 255, 0.75);
+            border-radius: 8px;
+            font-size: 0.9rem;
+        }
+
+        .zone-banner .action-row .a-icon {
+            font-size: 1.1rem;
+            flex-shrink: 0;
+        }
+
+        .zone-banner .action-row .a-label {
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .zone-banner .action-row .a-amount {
+            color: var(--red);
+            font-weight: 700;
+        }
+
+        /* ── Budget inputs ── */
+        .budget-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+            margin-bottom: 20px;
+        }
+
+        .budget-item {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .budget-item label {
+            font-size: 0.82rem;
+            color: var(--light);
+            font-weight: 600;
+        }
+
+        .budget-item input {
+            padding: 9px 12px;
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--text);
+            width: 100%;
+        }
+
+        .budget-item input:focus {
+            outline: none;
+            border-color: var(--blue);
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+
+        .budget-item .budget-note {
+            font-size: 0.78rem;
+            color: var(--light);
+        }
+
+        /* ── Alloc pills ── */
+        .alloc-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .alloc-pill {
+            flex: 1;
+            min-width: 140px;
+            padding: 12px 16px;
+            border-radius: 10px;
+            background: #f8fafc;
+            border: 1px solid var(--border);
+            text-align: center;
+        }
+
+        .alloc-pill .p-label {
+            font-size: 0.75rem;
+            color: var(--light);
+            margin-bottom: 4px;
+        }
+
+        .alloc-pill .p-value {
+            font-size: 1.2rem;
+            font-weight: 700;
+        }
+
+        .alloc-pill.p-base .p-value {
+            color: var(--blue);
+        }
+
+        .alloc-pill.p-invest .p-value {
+            color: var(--green);
+        }
+
+        .alloc-pill.p-swing .p-value {
+            color: var(--purple);
+        }
+
+        .alloc-pill.p-remain .p-value {
+            color: var(--gold);
+        }
+
+        /* ── Strategy table ── */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.88rem;
+        }
+
+        th,
+        td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border);
+        }
+
+        th {
+            background: #f8fafc;
+            font-size: 0.8rem;
+            color: var(--light);
+            font-weight: 600;
+            letter-spacing: 0.3px;
+        }
+
+        tr:last-child td {
+            border-bottom: none;
+        }
+
+        .tag {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.78rem;
+            font-weight: 600;
+        }
+
+        .tag-green {
+            background: #dcfce7;
+            color: #166534;
+        }
+
+        .tag-dgreen {
+            background: #bbf7d0;
+            color: #14532d;
+        }
+
+        .tag-yellow {
+            background: #fef9c3;
+            color: #854d0e;
+        }
+
+        .tag-orange {
+            background: #ffedd5;
+            color: #9a3412;
+        }
+
+        .tag-red {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+
+        /* ── Iron rules ── */
+        .rules-list {
+            list-style: none;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .rules-list li {
+            display: flex;
+            gap: 10px;
+            padding: 10px 14px;
+            background: #fef2f2;
+            border-radius: 8px;
+            border-left: 3px solid var(--red);
+            font-size: 0.9rem;
+        }
+
+        .rules-list li .r-num {
+            font-weight: 800;
+            color: var(--red);
+            flex-shrink: 0;
+        }
+
+        /* ── Divider ── */
+        .section-divider {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin: 4px 0 20px;
+            color: var(--light);
+            font-size: 0.8rem;
+        }
+
+        .section-divider::before,
+        .section-divider::after {
+            content: '';
+            flex: 1;
+            height: 1px;
+            background: var(--border);
+        }
+
+        /* ── Footer ── */
+        footer {
+            text-align: center;
+            color: var(--light);
+            font-size: 0.8rem;
+            padding: 16px 0 8px;
+        }
+
+        /* ── Responsive ── */
+        @media (max-width: 640px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            #mainChart {
+                height: 300px;
+            }
+
+            .budget-grid {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .header-right {
+                width: 100%;
+            }
+
+            .header-strategy {
+                min-width: 100%;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="header">
+        <div>
+            <h1>📈 易方达中证红利ETF · 年线策略看板</h1>
+            <div class="meta" id="headerMeta">正在加载数据...</div>
+        </div>
+        <div class="header-right">
+            <!-- 策略操作摘要 -->
+            <div class="header-strategy" id="headerStrategy">
+                <div class="hs-zone" id="hsZone">--</div>
+                <div id="hsActions"></div>
+            </div>
+            <!-- 偏离度数字 -->
+            <div id="headerBadge"></div>
+        </div>
+    </div>
+
+    <div class="loading" id="loading">数据加载中，请稍候...</div>
+
+    <!-- ── 前复权净值：展示 + 图表（策略判断基准）── -->
+    <div id="navBlockAdj" style="display:none;">
+        <div class="stats-grid">
+            <div class="stat-card" style="border-left-color:#10b981;">
+                <div class="s-label">最新前复权净值</div>
+                <div class="s-value" style="color:#10b981;" id="statAdjNav">--</div>
+                <div class="s-sub">分红复权后可比价格</div>
+            </div>
+            <div class="stat-card gold">
+                <div class="s-label">MA250 年线（前复权）</div>
+                <div class="s-value c-gold" id="statAdjMa250">--</div>
+                <div class="s-sub">策略判断基准</div>
+            </div>
+            <div class="stat-card" id="statDeviationCard">
+                <div class="s-label">偏离年线（策略基准）</div>
+                <div class="s-value" id="statDeviation">--</div>
+                <div class="s-sub" id="statDeviationHint">--</div>
+            </div>
+        </div>
+        <div class="card" id="chartCardAdj">
+            <h2>🎯 前复权净值走势 · MA250 年线（策略判断基准）</h2>
+            <div id="adjChart" style="width:100%;height:380px;"></div>
+        </div>
+    </div>
+
+    <!-- ── 偏离度柱状图（基于前复权净值）── -->
+    <div class="card" id="chartCardDev" style="display:none;">
+        <h2>📉 年线偏离度历史（基于前复权净值）</h2>
+        <div id="deviationChart"></div>
+    </div>
+
+    <!-- ── 策略区块（数据加载后显示）── -->
+    <div id="strategySection" style="display:none;">
+
+        <div class="section-divider">策略操作建议</div>
+
+        <!-- 今日策略 Banner -->
+        <div class="zone-banner" id="zoneBanner">
+            <div class="zone-title" id="zoneTitle">--</div>
+            <div class="zone-dev" id="zoneDev">--</div>
+            <div class="zone-actions" id="zoneActions"></div>
+        </div>
+
+        <!-- 资金规划 -->
+        <div class="card">
+            <h2>💰 资金规划</h2>
+
+            <div class="budget-grid">
+                <div class="budget-item">
+                    <label>今年总投资预算（可修改）</label>
+                    <input type="number" id="totalBudget" value="50000" oninput="onBudgetChange()">
+                    <div class="budget-note">底仓30% · 定投50% · 波段20%</div>
+                </div>
+                <div class="budget-item">
+                    <label>已投底仓金额（可修改）</label>
+                    <input type="number" id="investedAmount" value="0" oninput="onBudgetChange()">
+                    <div class="budget-note">已建仓的永久底仓</div>
+                </div>
+            </div>
+
+            <div class="alloc-row">
+                <div class="alloc-pill p-base">
+                    <div class="p-label">永久底仓 (30%)</div>
+                    <div class="p-value" id="allocBase">¥15,000</div>
+                </div>
+                <div class="alloc-pill p-invest">
+                    <div class="p-label">定投资金池 (50%)</div>
+                    <div class="p-value" id="allocInvest">¥25,000</div>
+                </div>
+                <div class="alloc-pill p-swing">
+                    <div class="p-label">波段弹药库 (20%)</div>
+                    <div class="p-value" id="allocSwing">¥10,000</div>
+                </div>
+                <div class="alloc-pill p-remain">
+                    <div class="p-label">剩余可用弹药</div>
+                    <div class="p-value" id="allocRemain">¥50,000</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 策略档位速查表 -->
+        <div class="card">
+            <h2>📋 策略档位速查表</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>档位</th>
+                        <th>偏离年线</th>
+                        <th>定投操作</th>
+                        <th>波段操作</th>
+                        <th>止盈规则</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><span class="tag tag-dgreen">极端低估</span></td>
+                        <td>≤ −10%</td>
+                        <td><b>× 3</b> 三倍</td>
+                        <td>重仓，每跌2%加仓一次(最多2次)</td>
+                        <td>−5%卖30%，0%卖50%，+5%清仓</td>
+                    </tr>
+                    <tr>
+                        <td><span class="tag tag-green">低估加仓</span></td>
+                        <td>−5% ~ −10%</td>
+                        <td><b>× 2</b> 翻倍</td>
+                        <td>可加仓5倍基准，每跌1%加一次(最多3次)</td>
+                        <td>0%卖50%，+3%清仓</td>
+                    </tr>
+                    <tr>
+                        <td><span class="tag tag-yellow">中枢均衡</span></td>
+                        <td>−5% ~ +5%</td>
+                        <td><b>× 1</b> 基准</td>
+                        <td>不做波段，躺平持有</td>
+                        <td>—</td>
+                    </tr>
+                    <tr>
+                        <td><span class="tag tag-orange">高估减仓</span></td>
+                        <td>+5% ~ +10%</td>
+                        <td><b>× 0.5</b> 减半</td>
+                        <td>卖出所有波段筹码</td>
+                        <td>达+8%可卖出定投筹码20%</td>
+                    </tr>
+                    <tr>
+                        <td><span class="tag tag-red">极端高估</span></td>
+                        <td>≥ +10%</td>
+                        <td><b>× 0.2</b> 或暂停</td>
+                        <td>卖出波段+定投筹码50%</td>
+                        <td>达+15%可卖出底仓30%</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 铁律 -->
+        <div class="card" style="border-left: 5px solid var(--red);">
+            <h2>⚠️ 不可突破的铁律</h2>
+            <ul class="rules-list">
+                <li><span class="r-num">①</span><span><b>底仓不动</b>：永久底仓只进不出，除非偏离≥+15%，否则绝对不卖，用于持续吃息复利。</span></li>
+                <li><span class="r-num">②</span><span><b>波段不恋战</b>：波段加仓赚了就跑，绝不将波段做成长期套牢的底仓。</span></li>
+                <li><span class="r-num">③</span><span><b>定投永不停</b>：哪怕在极端高位也至少投20%，避免完全踏空慢牛行情。</span></li>
+                <li><span class="r-num">④</span><span><b>跌破年线是机会</b>：红利低波越跌越有价值，跌破年线大胆加仓，不止损。</span></li>
+            </ul>
+        </div>
+    </div>
+
+    <footer>
+        <span id="dataSourceTag">数据源：加载中...</span>
+        &nbsp;·&nbsp;
+        图表仅供参考，不构成投资建议
+    </footer>
+
+    <script>
+        // ── 常量 ─────────────────────────────────────────────────────────────────
+        const JSON_FILE = "etf_515180_data.json";
+        const MA250_N = 250;
+
+        // ── 全局状态 ──────────────────────────────────────────────────────────────
+        let gLatestDev = null;
+
+        // ── DOM refs ──────────────────────────────────────────────────────────────
+        const loadingEl = document.getElementById("loading");
+
+        // ── Helpers ───────────────────────────────────────────────────────────────
+        function fmt(n, d = 4) { return typeof n === "number" ? n.toFixed(d) : "--"; }
+
+        function fmtMoney(n) {
+            return "¥" + Math.round(n).toLocaleString();
+        }
+
+        function fmtPct(n) {
+            if (typeof n !== "number") return "--";
+            return (n >= 0 ? "+" : "") + n.toFixed(2) + "%";
+        }
+
+        // ── Strategy engine ───────────────────────────────────────────────────────
+        function getZone(dev) {
+            if (dev <= -10) return "extreme-low";
+            if (dev <= -5) return "low";
+            if (dev < 5) return "neutral";
+            if (dev < 10) return "high";
+            return "extreme-high";
+        }
+
+        const ZONE_META = {
+            "extreme-low": { label: "💎 极端低估区（黄金坑）", fixedFactor: 3, swingFactor: 10, color: "#16a34a" },
+            "low": { label: "💰 低估加仓区", fixedFactor: 2, swingFactor: 5, color: "#22c55e" },
+            "neutral": { label: "⚖️ 中枢均衡区", fixedFactor: 1, swingFactor: 0, color: "#ca8a04" },
+            "high": { label: "⚠️ 高估减仓区", fixedFactor: 0.5, swingFactor: -1, color: "#ea580c" },
+            "extreme-high": { label: "🔥 极端高估区（危险区）", fixedFactor: 0.2, swingFactor: -2, color: "#e53e3e" },
+        };
+
+        function renderStrategy(dev) {
+            const budget = parseFloat(document.getElementById("totalBudget").value) || 50000;
+            const invested = parseFloat(document.getElementById("investedAmount").value) || 0;
+
+            const basePos = budget * 0.3;
+            const investPol = budget * 0.5;
+            const swingPol = budget * 0.2;
+            const remain = budget - invested;
+
+            // 建议每周基准 = 定投池 / 50 周，取整百
+            const weeklyBase = Math.max(100, Math.floor(investPol / 50 / 100) * 100);
+
+            // 更新配置数字
+            document.getElementById("allocBase").textContent = fmtMoney(basePos);
+            document.getElementById("allocInvest").textContent = fmtMoney(investPol);
+            document.getElementById("allocSwing").textContent = fmtMoney(swingPol);
+            const remainEl = document.getElementById("allocRemain");
+            remainEl.textContent = fmtMoney(remain);
+            remainEl.style.color = remain < 0 ? "var(--red)" : "var(--gold)";
+
+            if (dev === null) return;
+
+            const zone = getZone(dev);
+            const meta = ZONE_META[zone];
+            const fixedAmt = weeklyBase * meta.fixedFactor;
+
+            // Banner
+            const banner = document.getElementById("zoneBanner");
+            banner.className = `zone-banner zone-${zone}`;
+            document.getElementById("zoneTitle").textContent = meta.label;
+
+            const devEl = document.getElementById("zoneDev");
+            devEl.textContent = fmtPct(dev);
+            devEl.style.color = meta.color;
+
+            // 生成操作行
+            let actions = [];
+
+            if (zone === "extreme-low") {
+                actions = [
+                    { icon: "🎯", label: "定投操作", text: `本周定投 <span class="a-amount">${fmtMoney(fixedAmt)}</span>（基准 × 3）` },
+                    { icon: "🚀", label: "波段加仓", text: `可单笔加仓 <span class="a-amount">${fmtMoney(weeklyBase * 10)}</span>（10 倍基准）；每再跌 2% 加一次，最多 2 次` },
+                    { icon: "✅", label: "止盈规则", text: "反弹至 <b>−5%</b> 卖出波段筹码 30%；回到 <b>0%</b> 卖 50%；达 <b>+5%</b> 全部清仓" },
+                ];
+            } else if (zone === "low") {
+                actions = [
+                    { icon: "🎯", label: "定投操作", text: `本周定投 <span class="a-amount">${fmtMoney(fixedAmt)}</span>（基准 × 2）` },
+                    { icon: "📥", label: "波段加仓", text: `可单笔加仓 <span class="a-amount">${fmtMoney(weeklyBase * 5)}</span>（5 倍基准）；每再跌 1% 加一次，最多 3 次` },
+                    { icon: "✅", label: "止盈规则", text: "反弹至 <b>0%</b> 年线时卖出 50%；达 <b>+3%</b> 全部清仓" },
+                ];
+            } else if (zone === "neutral") {
+                actions = [
+                    { icon: "🎯", label: "定投操作", text: `本周定投 <span class="a-amount">${fmtMoney(fixedAmt)}</span>（基准不增不减）` },
+                    { icon: "💤", label: "波段操作", text: "不做波段，躺平持有，安心吃息" },
+                ];
+            } else if (zone === "high") {
+                actions = [
+                    { icon: "🎯", label: "定投操作", text: `本周定投 <span class="a-amount">${fmtMoney(fixedAmt)}</span>（基准 × 0.5 减半）` },
+                    { icon: "📤", label: "波段减仓", text: "此前低估加仓的波段筹码<b>全部卖出</b>落袋；底仓不动" },
+                    { icon: "⚠️", label: "额外提示", text: "偏离达 <b>+8%</b> 时，可卖出累计定投筹码的 20%，跌回年线再买回" },
+                ];
+            } else {
+                actions = [
+                    { icon: "🎯", label: "定投操作", text: `本周定投 <span class="a-amount">${fmtMoney(fixedAmt)}</span>（基准 × 0.2，或直接暂停）` },
+                    { icon: "🏃", label: "大幅减仓", text: "卖出所有波段筹码 + 累计定投筹码的 <b>50%</b>" },
+                    { icon: "🛡️", label: "底仓例外", text: "偏离≥ <b>+15%</b> 时，可卖出永久底仓的 30%，跌回年线以下再买回" },
+                ];
+            }
+
+            document.getElementById("zoneActions").innerHTML = actions.map(a => `
+            <div class="action-row">
+                <span class="a-icon">${a.icon}</span>
+                <div>
+                    <span class="a-label">${a.label}：</span>
+                    <span>${a.text}</span>
+                </div>
+            </div>
+        `).join("");
+
+            // ── 同步更新 Header 策略摘要 ──────────────────────────────────────────
+            const hsEl = document.getElementById("headerStrategy");
+            hsEl.style.display = "block";
+
+            // 更新区间主题样式
+            hsEl.className = "header-strategy hs-" + zone.replace("-", "-");
+            document.getElementById("hsZone").textContent = meta.label;
+
+            // 决定金额 class：低估/极端低估用绿（买入），高估用红（卖出），中枢用黄
+            const amtClass = (zone === "extreme-low" || zone === "low") ? "hs-amt-buy"
+                : (zone === "extreme-high" || zone === "high") ? "hs-amt-sell"
+                    : "hs-amt-hold";
+
+            // 渲染前2条操作；把 a-amount 替换为对应颜色 class
+            const hsRows = actions.slice(0, 2).map(a => {
+                const styledText = a.text
+                    .replace(/class="a-amount"/g, `class="${amtClass}"`)
+                    .replace(/<b>/g, "<b style='font-weight:700;'>"); // 保持加粗
+                return `<div class="hs-row">
+                    <span class="hs-icon">${a.icon}</span>
+                    <span><b>${a.label}：</b>${styledText}</span>
+                </div>`;
+            }).join("");
+            document.getElementById("hsActions").innerHTML = hsRows;
+        }
+
+        // 当预算输入变化时，刷新策略面板
+        function onBudgetChange() {
+            renderStrategy(gLatestDev);
+        }
+
+        // ── Render ────────────────────────────────────────────────────────────────
+        function render(jsonData) {
+            const records = jsonData.records;
+
+            if (!records || !records.length) {
+                loadingEl.textContent = "JSON 数据为空，请先运行 东方财富.py 生成数据文件";
+                return;
+            }
+
+            const dates = records.map(r => r.date);
+            const adjNavs = records.map(r => r.close);
+            const adjMa250 = records.map(r => r.ma250);
+            const devArr = records.map(r => r.dev_pct);
+
+            const last = records[records.length - 1];
+            gLatestDev = last.dev_pct;
+            const isUp = gLatestDev !== null && gLatestDev >= 0;
+
+            // ── Stats cards ───────────────────────────────────────────────────────
+            document.getElementById("statAdjNav").textContent = fmt(last.close);
+            document.getElementById("statAdjMa250").textContent = last.ma250 ? fmt(last.ma250) : "--";
+
+            const devEl = document.getElementById("statDeviation");
+            const devCard = document.getElementById("statDeviationCard");
+            const devHint = document.getElementById("statDeviationHint");
+
+            if (gLatestDev !== null) {
+                devEl.textContent = fmtPct(gLatestDev);
+                devEl.className = "s-value " + (isUp ? "c-red" : "c-green");
+                devCard.className = "stat-card " + (isUp ? "red" : "green");
+                devHint.textContent = isUp ? "高于年线，注意风险" : "低于年线，关注机会";
+            }
+
+            // ── Header badge ──────────────────────────────────────────────────────
+            document.getElementById("headerMeta").textContent =
+                `数据共 ${records.length} 条 · 最新 ${last.date} · 生成于 ${jsonData.generated_at}`;
+
+            if (gLatestDev !== null) {
+                const bc = isUp ? "#fc8181" : "#68d391";
+                document.getElementById("headerBadge").innerHTML = `
+                <div style="background:rgba(255,255,255,0.15);padding:10px 18px;border-radius:10px;text-align:center;">
+                    <div style="font-size:0.75rem;opacity:0.8;">偏离年线</div>
+                    <div style="font-size:1.8rem;font-weight:800;color:${bc};">${fmtPct(gLatestDev)}</div>
+                </div>`;
+            }
+
+            // ── Show sections ─────────────────────────────────────────────────────
+            loadingEl.classList.add("hidden");
+            document.getElementById("navBlockAdj").style.display = "block";
+            document.getElementById("chartCardDev").style.display = "block";
+            document.getElementById("strategySection").style.display = "block";
+
+            renderStrategy(gLatestDev);
+
+            // ── Adj NAV chart（前复权净值 + MA250）────────────────────────────────
+            const eAdj = echarts.init(document.getElementById("adjChart"));
+            eAdj.setOption({
+                backgroundColor: "#fff",
+                grid: { top: 56, right: 36, bottom: 60, left: 60 },
+                tooltip: {
+                    trigger: "axis",
+                    backgroundColor: "#1a202c",
+                    borderColor: "#2d3748",
+                    textStyle: { color: "#e2e8f0", fontSize: 12 },
+                    formatter(params) {
+                        const idx = params[0].dataIndex;
+                        const rec = records[idx];
+                        const d = rec.dev_pct;
+                        const sign = d !== null && d >= 0 ? "+" : "";
+                        const dc = d !== null ? (d >= 0 ? "#fc8181" : "#68d391") : "#a0aec0";
+                        const dt = d !== null
+                            ? `<span style="color:${dc};font-weight:700;">${sign}${d.toFixed(2)}%</span>`
+                            : `<span style="color:#a0aec0;">--</span>`;
+                        return `
+                        <div style="padding:4px 0;min-width:210px;">
+                            <div style="font-size:11px;color:#a0aec0;margin-bottom:6px;">${rec.date}</div>
+                            <div style="display:flex;justify-content:space-between;gap:18px;margin-bottom:3px;">
+                                <span style="color:#6ee7b7;">前复权收盘</span>
+                                <b>${rec.close.toFixed(4)}</b>
+                            </div>
+                            <div style="display:flex;justify-content:space-between;gap:18px;margin-bottom:3px;">
+                                <span style="color:#fde68a;">MA250 年线</span>
+                                <span>${rec.ma250 ? rec.ma250.toFixed(4) : "--"}</span>
+                            </div>
+                            <div style="border-top:1px solid #2d3748;margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;gap:18px;">
+                                <span>偏离年线（策略基准）</span>${dt}
+                            </div>
+                        </div>`;
+                    }
+                },
+                legend: { top: 8, right: 10, textStyle: { color: "#4a5568", fontSize: 12 }, icon: "roundRect" },
+                xAxis: {
+                    type: "category",
+                    data: dates,
+                    axisLabel: {
+                        fontSize: 11,
+                        color: "#718096",
+                        interval: Math.floor(dates.length / 10),
+                        rotate: dates.length > 100 ? 30 : 0
+                    },
+                    axisLine: { lineStyle: { color: "#e2e8f0" } }
+                },
+                yAxis: {
+                    type: "value",
+                    scale: true,
+                    axisLabel: { fontSize: 11, color: "#718096" },
+                    splitLine: { lineStyle: { color: "#f0f4f8", type: "dashed" } }
+                },
+                dataZoom: [
+                    { type: "inside", start: Math.max(0, 100 - (MA250_N / records.length) * 200), end: 100 },
+                    { type: "slider", height: 22, bottom: 4, start: Math.max(0, 100 - (MA250_N / records.length) * 200), end: 100, textStyle: { color: "#718096", fontSize: 10 } }
+                ],
+                series: [
+                    {
+                        name: "前复权收盘", type: "line",
+                        data: adjNavs,
+                        lineStyle: { color: "#10b981", width: 2 },
+                        itemStyle: { color: "#10b981" },
+                        showSymbol: false,
+                        areaStyle: { color: { type: "linear", x: 0, y: 0, x2: 0, y2: 1, colorStops: [{ offset: 0, color: "rgba(16,185,129,0.12)" }, { offset: 1, color: "rgba(16,185,129,0)" }] } },
+                        z: 3
+                    },
+                    {
+                        name: "MA250 年线", type: "line",
+                        data: adjMa250,
+                        lineStyle: { color: "#f59e0b", width: 2.5, type: "dashed" },
+                        itemStyle: { color: "#f59e0b" },
+                        showSymbol: false, connectNulls: true, z: 2
+                    }
+                ]
+            });
+
+            // ── Deviation chart ───────────────────────────────────────────────────
+            const devDates = [], devData = [];
+            records.forEach(r => {
+                if (r.dev_pct === null) return;
+                devDates.push(r.date);
+                devData.push(r.dev_pct);
+            });
+
+            const eDiv = echarts.init(document.getElementById("deviationChart"));
+            eDiv.setOption({
+                backgroundColor: "#fff",
+                grid: { top: 12, right: 36, bottom: 52, left: 60 },
+                tooltip: {
+                    trigger: "axis",
+                    backgroundColor: "#1a202c",
+                    borderColor: "#2d3748",
+                    textStyle: { color: "#e2e8f0", fontSize: 12 },
+                    formatter(p) {
+                        const v = p[0].value;
+                        const sign = v >= 0 ? "+" : "";
+                        const c = v >= 0 ? "#fc8181" : "#68d391";
+                        return `<b style="color:#a0aec0;">${p[0].axisValue}</b><br>偏离年线：<span style="color:${c};font-weight:700;">${sign}${v}%</span>`;
+                    }
+                },
+                xAxis: {
+                    type: "category",
+                    data: devDates,
+                    axisLabel: { fontSize: 10, color: "#718096", interval: Math.floor(devDates.length / 8), rotate: 30 },
+                    axisLine: { lineStyle: { color: "#e2e8f0" } }
+                },
+                yAxis: {
+                    type: "value",
+                    axisLabel: { fontSize: 10, color: "#718096", formatter: v => v + "%" },
+                    splitLine: { lineStyle: { color: "#f0f4f8", type: "dashed" } }
+                },
+                dataZoom: [
+                    { type: "inside", start: 0, end: 100 },
+                    { type: "slider", height: 18, bottom: 2, textStyle: { color: "#718096", fontSize: 10 } }
+                ],
+                series: [{
+                    type: "bar",
+                    data: devData.map(v => ({ value: v, itemStyle: { color: v >= 0 ? "#fc8181" : "#68d391" } })),
+                    barMaxWidth: 8
+                }]
+            });
+
+            window.addEventListener("resize", () => { eAdj.resize(); eDiv.resize(); });
+        }
+
+        // ── 加载同级 JSON 文件 ────────────────────────────────────────────────────
+        async function loadJsonData() {
+            loadingEl.classList.remove("hidden");
+            loadingEl.textContent = "正在加载数据文件...";
+
+            try {
+                const res = await fetch(`./${JSON_FILE}`);
+
+                if (!res.ok) throw new Error(`HTTP ${res.status} — 请先运行 东方财富.py 生成数据`);
+
+                const jsonData = await res.json();
+                document.getElementById("dataSourceTag").textContent =
+                    `数据源：${JSON_FILE} · ${jsonData.symbol} ${jsonData.name}`;
+                render(jsonData);
+
+            } catch (err) {
+                loadingEl.textContent = `加载失败：${err.message}`;
+                console.error(err);
+            }
+        }
+
+        // ── Bootstrap ─────────────────────────────────────────────────────────────
+        loadJsonData();
+    </script>
+</body>
+
+</html>
