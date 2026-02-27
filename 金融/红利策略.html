@@ -945,17 +945,17 @@
                 return;
             }
 
-            const dates = records.map(r => r.date);
-            const adjNavs = records.map(r => r.close);
+            const dates    = records.map(r => r.date);
+            const adjNavs  = records.map(r => r.adj_net_price);
             const adjMa250 = records.map(r => r.ma250);
-            const devArr = records.map(r => r.dev_pct);
+            const devArr   = records.map(r => r.nav_ma250_deviation);
 
             const last = records[records.length - 1];
-            gLatestDev = last.dev_pct;
+            gLatestDev = last.nav_ma250_deviation;
             const isUp = gLatestDev !== null && gLatestDev >= 0;
 
             // ── Stats cards ───────────────────────────────────────────────────────
-            document.getElementById("statAdjNav").textContent = fmt(last.close);
+            document.getElementById("statAdjNav").textContent   = fmt(last.adj_net_price);
             document.getElementById("statAdjMa250").textContent = last.ma250 ? fmt(last.ma250) : "--";
 
             const devEl = document.getElementById("statDeviation");
@@ -1003,7 +1003,7 @@
                     formatter(params) {
                         const idx = params[0].dataIndex;
                         const rec = records[idx];
-                        const d = rec.dev_pct;
+                        const d = rec.nav_ma250_deviation;
                         const sign = d !== null && d >= 0 ? "+" : "";
                         const dc = d !== null ? (d >= 0 ? "#fc8181" : "#68d391") : "#a0aec0";
                         const dt = d !== null
@@ -1014,7 +1014,7 @@
                             <div style="font-size:11px;color:#a0aec0;margin-bottom:6px;">${rec.date}</div>
                             <div style="display:flex;justify-content:space-between;gap:18px;margin-bottom:3px;">
                                 <span style="color:#6ee7b7;">前复权收盘</span>
-                                <b>${rec.close.toFixed(4)}</b>
+                                <b>${rec.adj_net_price.toFixed(4)}</b>
                             </div>
                             <div style="display:flex;justify-content:space-between;gap:18px;margin-bottom:3px;">
                                 <span style="color:#fde68a;">MA250 年线</span>
@@ -1071,9 +1071,9 @@
             // ── Deviation chart ───────────────────────────────────────────────────
             const devDates = [], devData = [];
             records.forEach(r => {
-                if (r.dev_pct === null) return;
+                if (r.nav_ma250_deviation === null) return;
                 devDates.push(r.date);
-                devData.push(r.dev_pct);
+                devData.push(r.nav_ma250_deviation);
             });
 
             const eDiv = echarts.init(document.getElementById("deviationChart"));
