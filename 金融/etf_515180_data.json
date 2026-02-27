@@ -1,0 +1,347 @@
+{
+  "symbol": "515180",
+  "name": "易方达中证红利ETF",
+  "generated_at": "2026-02-27",
+  "records": [
+    {
+      "date": "2026-01-05",
+      "source": "baostock",
+      "net_price": 1.374,
+      "net_totsl": null,
+      "net_scale": 0.1458,
+      "adj_net_price": 1.374,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-06",
+      "source": "baostock",
+      "net_price": 1.391,
+      "net_totsl": null,
+      "net_scale": 1.2373,
+      "adj_net_price": 1.391,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-07",
+      "source": "baostock",
+      "net_price": 1.391,
+      "net_totsl": null,
+      "net_scale": 0.0,
+      "adj_net_price": 1.391,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-08",
+      "source": "baostock",
+      "net_price": 1.387,
+      "net_totsl": null,
+      "net_scale": -0.2876,
+      "adj_net_price": 1.387,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-09",
+      "source": "baostock",
+      "net_price": 1.392,
+      "net_totsl": null,
+      "net_scale": 0.3605,
+      "adj_net_price": 1.392,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-12",
+      "source": "baostock",
+      "net_price": 1.395,
+      "net_totsl": null,
+      "net_scale": 0.2155,
+      "adj_net_price": 1.395,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-13",
+      "source": "baostock",
+      "net_price": 1.392,
+      "net_totsl": null,
+      "net_scale": -0.2151,
+      "adj_net_price": 1.392,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-14",
+      "source": "baostock",
+      "net_price": 1.382,
+      "net_totsl": null,
+      "net_scale": -0.7184,
+      "adj_net_price": 1.382,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-15",
+      "source": "baostock",
+      "net_price": 1.377,
+      "net_totsl": null,
+      "net_scale": -0.3618,
+      "adj_net_price": 1.377,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-16",
+      "source": "baostock",
+      "net_price": 1.367,
+      "net_totsl": null,
+      "net_scale": -0.7262,
+      "adj_net_price": 1.367,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-19",
+      "source": "baostock",
+      "net_price": 1.378,
+      "net_totsl": null,
+      "net_scale": 0.8047,
+      "adj_net_price": 1.378,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-20",
+      "source": "baostock",
+      "net_price": 1.4,
+      "net_totsl": null,
+      "net_scale": 1.5965,
+      "adj_net_price": 1.4,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-21",
+      "source": "baostock",
+      "net_price": 1.39,
+      "net_totsl": null,
+      "net_scale": -0.7143,
+      "adj_net_price": 1.39,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-22",
+      "source": "baostock",
+      "net_price": 1.397,
+      "net_totsl": null,
+      "net_scale": 0.5036,
+      "adj_net_price": 1.397,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-23",
+      "source": "baostock",
+      "net_price": 1.397,
+      "net_totsl": null,
+      "net_scale": 0.0,
+      "adj_net_price": 1.397,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-26",
+      "source": "baostock",
+      "net_price": 1.407,
+      "net_totsl": null,
+      "net_scale": 0.7158,
+      "adj_net_price": 1.407,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-27",
+      "source": "baostock",
+      "net_price": 1.398,
+      "net_totsl": null,
+      "net_scale": -0.6397,
+      "adj_net_price": 1.398,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-28",
+      "source": "baostock",
+      "net_price": 1.417,
+      "net_totsl": null,
+      "net_scale": 1.3591,
+      "adj_net_price": 1.417,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-29",
+      "source": "baostock",
+      "net_price": 1.435,
+      "net_totsl": null,
+      "net_scale": 1.2703,
+      "adj_net_price": 1.435,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-01-30",
+      "source": "baostock",
+      "net_price": 1.419,
+      "net_totsl": null,
+      "net_scale": -1.115,
+      "adj_net_price": 1.419,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-02-02",
+      "source": "baostock",
+      "net_price": 1.379,
+      "net_totsl": null,
+      "net_scale": -2.8189,
+      "adj_net_price": 1.379,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-02-03",
+      "source": "baostock",
+      "net_price": 1.388,
+      "net_totsl": null,
+      "net_scale": 0.6526,
+      "adj_net_price": 1.388,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-02-04",
+      "source": "baostock",
+      "net_price": 1.424,
+      "net_totsl": null,
+      "net_scale": 2.5937,
+      "adj_net_price": 1.424,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-02-05",
+      "source": "baostock",
+      "net_price": 1.419,
+      "net_totsl": null,
+      "net_scale": -0.3511,
+      "adj_net_price": 1.419,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-02-06",
+      "source": "baostock",
+      "net_price": 1.414,
+      "net_totsl": null,
+      "net_scale": -0.3524,
+      "adj_net_price": 1.414,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-02-09",
+      "source": "baostock",
+      "net_price": 1.422,
+      "net_totsl": null,
+      "net_scale": 0.5658,
+      "adj_net_price": 1.422,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-02-10",
+      "source": "baostock",
+      "net_price": 1.43,
+      "net_totsl": null,
+      "net_scale": 0.5626,
+      "adj_net_price": 1.43,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-02-11",
+      "source": "baostock",
+      "net_price": 1.439,
+      "net_totsl": null,
+      "net_scale": 0.6294,
+      "adj_net_price": 1.439,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-02-12",
+      "source": "baostock",
+      "net_price": 1.436,
+      "net_totsl": null,
+      "net_scale": -0.2085,
+      "adj_net_price": 1.436,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-02-13",
+      "source": "baostock",
+      "net_price": 1.416,
+      "net_totsl": null,
+      "net_scale": -1.3928,
+      "adj_net_price": 1.416,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-02-24",
+      "source": "baostock",
+      "net_price": 1.434,
+      "net_totsl": null,
+      "net_scale": 1.2712,
+      "adj_net_price": 1.434,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-02-25",
+      "source": "baostock",
+      "net_price": 1.443,
+      "net_totsl": null,
+      "net_scale": 0.6276,
+      "adj_net_price": 1.443,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-02-26",
+      "source": "baostock",
+      "net_price": 1.439,
+      "net_totsl": null,
+      "net_scale": -0.2772,
+      "adj_net_price": 1.439,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    },
+    {
+      "date": "2026-02-27",
+      "source": "baostock",
+      "net_price": 1.454,
+      "net_totsl": null,
+      "net_scale": 1.0424,
+      "adj_net_price": 1.454,
+      "ma250": null,
+      "nav_ma250_deviation": null
+    }
+  ]
+}

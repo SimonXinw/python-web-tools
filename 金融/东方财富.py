@@ -5,6 +5,7 @@ import time
 from datetime import datetime
 
 import akshare as ak
+import baostock as bs
 import requests
 
 SYMBOL = "515180"
@@ -19,6 +20,8 @@ SUPABASE_TABLE = "yfd_dividend"
 BATCH_SIZE = 500
 
 
+# ── MA250 计算 ────────────────────────────────────────────────────────────────
+
 def calc_ma(data, n):
     result = []
     for i in range(len(data)):
@@ -30,33 +33,17 @@ def calc_ma(data, n):
     return result
 
 
-def fetch_and_build():
-    print(f"正在拉取 {SYMBOL} ({ETF_NAME}) 前复权历史数据...")
+# ── 统一格式化：把任意来源的 (dates, closes, change_pcts, source) 转为标准记录 ──
 
-    df = ak.fund_etf_hist_em(
-        symbol=SYMBOL,
-        period="daily",
-        start_date=START_DATE,
-        end_date=END_DATE,
-        adjust="qfq",
-    )
-    df = df.sort_values("日期").reset_index(drop=True)
-
-    dates = df["日期"].astype(str).tolist()
-    closes = [round(float(v), 4) for v in df["收盘"].tolist()]
-    change_pcts = [round(float(v), 4) for v in df["涨跌幅"].tolist()]
+def normalize(dates, closes, change_pcts, source):
     ma250_list = calc_ma(closes, MA250_N)
-
     records = []
     for date, close, change_pct, ma in zip(dates, closes, change_pcts, ma250_list):
-        dev_pct = None
-        if ma is not None:
-            dev_pct = round((close / ma - 1) * 100, 4)
-
+        dev_pct = round((close / ma - 1) * 100, 4) if ma is not None else None
         records.append(
             {
                 "date": date,
-                "source": "akshare",
+                "source": source,
                 "net_price": close,
                 "net_totsl": None,
                 "net_scale": change_pct,
@@ -65,8 +52,92 @@ def fetch_and_build():
                 "nav_ma250_deviation": dev_pct,
             }
         )
-
     return records
+
+
+# ── 数据源 1：东方财富 基金接口（akshare fund_etf_hist_em）────────────────────
+
+def fetch_from_em_fund():
+    print("  [数据源1] 东方财富基金接口 fund_etf_hist_em ...")
+    df = ak.fund_etf_hist_em(
+        symbol=SYMBOL,
+        period="daily",
+        start_date=START_DATE,
+        end_date=END_DATE,
+        adjust="qfq",
+    )
+    df = df.sort_values("日期").reset_index(drop=True)
+    dates = df["日期"].astype(str).tolist()
+    closes = [round(float(v), 4) for v in df["收盘"].tolist()]
+    change_pcts = [round(float(v), 4) for v in df["涨跌幅"].tolist()]
+    return normalize(dates, closes, change_pcts, "akshare/东方财富基金")
+
+
+# ── 数据源 2：东方财富 股票接口（akshare stock_zh_a_hist）─────────────────────
+
+def fetch_from_em_stock():
+    print("  [数据源2] 东方财富股票接口 stock_zh_a_hist ...")
+    df = ak.stock_zh_a_hist(
+        symbol=SYMBOL,
+        period="daily",
+        start_date=START_DATE,
+        end_date=END_DATE,
+        adjust="qfq",
+    )
+    df = df.sort_values("日期").reset_index(drop=True)
+    dates = df["日期"].astype(str).tolist()
+    closes = [round(float(v), 4) for v in df["收盘"].tolist()]
+    change_pcts = [round(float(v), 4) for v in df["涨跌幅"].tolist()]
+    return normalize(dates, closes, change_pcts, "akshare/东方财富股票")
+
+
+# ── 数据源 3：baostock（完全独立，不依赖东方财富）────────────────────────────
+
+def fetch_from_baostock():
+    print("  [数据源3] baostock ...")
+    lg = bs.login()
+    if lg.error_code != "0":
+        raise RuntimeError(f"baostock 登录失败: {lg.error_msg}")
+
+    rs = bs.query_history_k_data_plus(
+        f"sh.{SYMBOL}",
+        "date,close,pctChg",
+        start_date=START_DATE[:4] + "-" + START_DATE[4:6] + "-" + START_DATE[6:],
+        end_date=END_DATE[:4] + "-" + END_DATE[4:6] + "-" + END_DATE[6:],
+        frequency="d",
+        adjustflag="2",  # 前复权
+    )
+    rows = []
+    while rs.error_code == "0" and rs.next():
+        rows.append(rs.get_row_data())
+    bs.logout()
+
+    if not rows:
+        raise RuntimeError("baostock 返回数据为空")
+
+    rows.sort(key=lambda r: r[0])
+    dates = [r[0] for r in rows]
+    closes = [round(float(r[1]), 4) for r in rows]
+    change_pcts = [round(float(r[2]), 4) for r in rows]
+    return normalize(dates, closes, change_pcts, "baostock")
+
+
+# ── 按顺序尝试所有数据源，第一个成功的直接返回 ────────────────────────────────
+
+def fetch_and_build():
+    sources = [fetch_from_em_fund, fetch_from_em_stock, fetch_from_baostock]
+    last_err = None
+
+    for fetch_fn in sources:
+        try:
+            records = fetch_fn()
+            print(f"  成功，共 {len(records)} 条记录，来源：{records[0]['source']}")
+            return records
+        except Exception as e:
+            print(f"  失败：{e}")
+            last_err = e
+
+    raise RuntimeError(f"所有数据源均失败，最后一个错误：{last_err}")
 
 
 # ── Supabase ──────────────────────────────────────────────────────────────────
@@ -130,6 +201,7 @@ def main():
         records = data["records"]
         print(f"已读取 {len(records)} 条，生成于 {data['generated_at']}")
     else:
+        print(f"正在拉取 {SYMBOL} ({ETF_NAME}) 前复权历史数据...")
         records = fetch_and_build()
 
         output = {
