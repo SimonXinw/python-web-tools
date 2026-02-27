@@ -948,10 +948,10 @@
             const dates    = records.map(r => r.date);
             const adjNavs  = records.map(r => r.adj_net_price);
             const adjMa250 = records.map(r => r.ma250);
-            const devArr   = records.map(r => r.nav_ma250_deviation);
+            const devArr   = records.map(r => r.nav_ma250_deviation_pct);
 
             const last = records[records.length - 1];
-            gLatestDev = last.nav_ma250_deviation;
+            gLatestDev = last.nav_ma250_deviation_pct;
             const isUp = gLatestDev !== null && gLatestDev >= 0;
 
             // ── Stats cards ───────────────────────────────────────────────────────
@@ -1003,7 +1003,7 @@
                     formatter(params) {
                         const idx = params[0].dataIndex;
                         const rec = records[idx];
-                        const d = rec.nav_ma250_deviation;
+                        const d = rec.nav_ma250_deviation_pct;
                         const sign = d !== null && d >= 0 ? "+" : "";
                         const dc = d !== null ? (d >= 0 ? "#fc8181" : "#68d391") : "#a0aec0";
                         const dt = d !== null
@@ -1071,9 +1071,9 @@
             // ── Deviation chart ───────────────────────────────────────────────────
             const devDates = [], devData = [];
             records.forEach(r => {
-                if (r.nav_ma250_deviation === null) return;
+                if (r.nav_ma250_deviation_pct === null) return;
                 devDates.push(r.date);
-                devData.push(r.nav_ma250_deviation);
+                devData.push(r.nav_ma250_deviation_pct);
             });
 
             const eDiv = echarts.init(document.getElementById("deviationChart"));

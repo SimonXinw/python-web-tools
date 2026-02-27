@@ -49,7 +49,7 @@ def normalize(dates, closes, change_pcts, source):
                 "net_scale": change_pct,
                 "adj_net_price": close,
                 "ma250": ma,
-                "nav_ma250_deviation": dev_pct,
+                "nav_ma250_deviation_pct": dev_pct,
             }
         )
     return records
@@ -236,7 +236,7 @@ def main():
         print(f"adj_net_price     : {last['adj_net_price']}")
         print(f"net_scale (涨跌幅): {last['net_scale']}%")
         print(f"ma250             : {last['ma250']}")
-        print(f"偏离度            : {last['nav_ma250_deviation']}%")
+        print(f"偏离度            : {last['nav_ma250_deviation_pct']}%")
 
     print("\n开始同步到 Supabase...")
     supabase_delete_all()
