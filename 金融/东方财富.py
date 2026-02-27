@@ -114,7 +114,7 @@ def fetch_from_sina():
 # ── 数据源 4：baostock（完全独立，不依赖东方财富）────────────────────────────
 
 def fetch_from_baostock():
-    print("  [数据源3] baostock ...")
+    print("  [数据源4] baostock ...")
     lg = bs.login()
     if lg.error_code != "0":
         raise RuntimeError(f"baostock 登录失败: {lg.error_msg}")
@@ -145,7 +145,7 @@ def fetch_from_baostock():
 # ── 按顺序尝试所有数据源，第一个成功的直接返回 ────────────────────────────────
 
 def fetch_and_build():
-    sources = [fetch_from_em_fund, fetch_from_em_stock, fetch_from_sina, fetch_from_baostock]
+    sources = [fetch_from_em_fund, fetch_from_sina, fetch_from_em_stock, fetch_from_baostock]
     last_err = None
 
     for fetch_fn in sources:
@@ -187,11 +187,7 @@ def supabase_insert_all(records):
 
     for i in range(0, total, BATCH_SIZE):
         batch = records[i : i + BATCH_SIZE]
-        clean_batch = [
-            {k: v for k, v in r.items() if v is not None}
-            for r in batch
-        ]
-        resp = requests.post(url, headers=supabase_headers(), json=clean_batch, timeout=30)
+        resp = requests.post(url, headers=supabase_headers(), json=batch, timeout=30)
         if resp.status_code not in (200, 201):
             raise RuntimeError(
                 f"插入失败 batch {i // BATCH_SIZE + 1}: HTTP {resp.status_code} — {resp.text}"
