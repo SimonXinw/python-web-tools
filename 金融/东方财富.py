@@ -73,7 +73,8 @@ def fetch_from_em_fund():
     return normalize(dates, closes, change_pcts, "akshare/东方财富基金")
 
 
-# ── 数据源 2：东方财富 股票接口（akshare stock_zh_a_hist）─────────────────────
+# ── 数据源 2：东方财富 股票接口（akshare stock_zh_a_hist）────────────────────
+# 注意：与数据源1同属东方财富服务器，IP 被限速时两者同时失败，非真正冗余
 
 def fetch_from_em_stock():
     print("  [数据源2] 东方财富股票接口 stock_zh_a_hist ...")
@@ -91,7 +92,26 @@ def fetch_from_em_stock():
     return normalize(dates, closes, change_pcts, "akshare/东方财富股票")
 
 
-# ── 数据源 3：baostock（完全独立，不依赖东方财富）────────────────────────────
+# ── 数据源 3：新浪财经（fund_etf_hist_sina，独立服务器，东方财富限速时有效）──
+
+def fetch_from_sina():
+    print("  [数据源3] 新浪财经 fund_etf_hist_sina ...")
+    df = ak.fund_etf_hist_sina(symbol=f"sh{SYMBOL}")
+    df = df.sort_values("date").reset_index(drop=True)
+
+    dates = df["date"].astype(str).tolist()
+    closes = [round(float(v), 4) for v in df["close"].tolist()]
+
+    # 新浪接口无涨跌幅列，通过相邻收盘价计算
+    change_pcts = [0.0]
+    for i in range(1, len(closes)):
+        pct = round((closes[i] - closes[i - 1]) / closes[i - 1] * 100, 4)
+        change_pcts.append(pct)
+
+    return normalize(dates, closes, change_pcts, "akshare/新浪财经")
+
+
+# ── 数据源 4：baostock（完全独立，不依赖东方财富）────────────────────────────
 
 def fetch_from_baostock():
     print("  [数据源3] baostock ...")
@@ -125,7 +145,7 @@ def fetch_from_baostock():
 # ── 按顺序尝试所有数据源，第一个成功的直接返回 ────────────────────────────────
 
 def fetch_and_build():
-    sources = [fetch_from_em_fund, fetch_from_em_stock, fetch_from_baostock]
+    sources = [fetch_from_em_fund, fetch_from_em_stock, fetch_from_sina, fetch_from_baostock]
     last_err = None
 
     for fetch_fn in sources:
