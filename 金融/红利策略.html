@@ -731,38 +731,38 @@
                 <tbody>
                     <tr>
                         <td><span class="tag tag-dgreen">极端低估</span></td>
-                        <td>≤ −10%</td>
+                        <td>≤ −8%</td>
                         <td><b>× 3</b> 三倍</td>
-                        <td>重仓，每跌2%加仓一次(最多2次)</td>
-                        <td>−5%卖30%，0%卖50%，+5%清仓</td>
+                        <td>单笔加仓10倍基准；每再跌1%加一次，最多2次</td>
+                        <td>−5%卖30%，0%卖50%，+8%清仓</td>
                     </tr>
                     <tr>
                         <td><span class="tag tag-green">低估加仓</span></td>
-                        <td>−5% ~ −10%</td>
+                        <td>−5% ~ −8%</td>
                         <td><b>× 2</b> 翻倍</td>
-                        <td>可加仓5倍基准，每跌1%加一次(最多3次)</td>
-                        <td>0%卖50%，+3%清仓</td>
+                        <td>单笔加仓5倍基准；每再跌0.5%加一次，最多3次</td>
+                        <td>0%卖50%，+5%清仓</td>
                     </tr>
                     <tr>
                         <td><span class="tag tag-yellow">中枢均衡</span></td>
-                        <td>−5% ~ +5%</td>
+                        <td>−5% ~ +8%</td>
                         <td><b>× 1</b> 基准</td>
                         <td>不做波段，躺平持有</td>
                         <td>—</td>
                     </tr>
                     <tr>
                         <td><span class="tag tag-orange">高估减仓</span></td>
-                        <td>+5% ~ +10%</td>
+                        <td>+8% ~ +18%</td>
                         <td><b>× 0.5</b> 减半</td>
-                        <td>卖出所有波段筹码</td>
-                        <td>达+8%可卖出定投筹码20%</td>
+                        <td>卖出所有波段筹码；无波段筹码则不动底仓</td>
+                        <td>达+15%可卖出定投筹码20%，跌回+8%再买回</td>
                     </tr>
                     <tr>
                         <td><span class="tag tag-red">极端高估</span></td>
-                        <td>≥ +10%</td>
+                        <td>≥ +18%</td>
                         <td><b>× 0.2</b> 或暂停</td>
-                        <td>卖出波段+定投筹码50%</td>
-                        <td>达+15%可卖出底仓30%</td>
+                        <td>波段筹码 + 定投筹码50%全部卖出</td>
+                        <td>达+25%可卖出底仓30%，跌回+10%以下再买回</td>
                     </tr>
                 </tbody>
             </table>
@@ -772,7 +772,7 @@
         <div class="card" style="border-left: 5px solid var(--red);">
             <h2>⚠️ 不可突破的铁律</h2>
             <ul class="rules-list">
-                <li><span class="r-num">①</span><span><b>底仓不动</b>：永久底仓只进不出，除非偏离≥+15%，否则绝对不卖，用于持续吃息复利。</span></li>
+                <li><span class="r-num">①</span><span><b>底仓不动</b>：永久底仓只进不出，除非偏离≥+25%，否则绝对不卖，用于持续吃息复利。</span></li>
                 <li><span class="r-num">②</span><span><b>波段不恋战</b>：波段加仓赚了就跑，绝不将波段做成长期套牢的底仓。</span></li>
                 <li><span class="r-num">③</span><span><b>定投永不停</b>：哪怕在极端高位也至少投20%，避免完全踏空慢牛行情。</span></li>
                 <li><span class="r-num">④</span><span><b>跌破年线是机会</b>：红利低波越跌越有价值，跌破年线大胆加仓，不止损。</span></li>
@@ -811,10 +811,10 @@
 
         // ── Strategy engine ───────────────────────────────────────────────────────
         function getZone(dev) {
-            if (dev <= -10) return "extreme-low";
+            if (dev <= -8) return "extreme-low";
             if (dev <= -5) return "low";
-            if (dev < 5) return "neutral";
-            if (dev < 10) return "high";
+            if (dev < 8) return "neutral";
+            if (dev < 18) return "high";
             return "extreme-high";
         }
 
@@ -867,31 +867,31 @@
             if (zone === "extreme-low") {
                 actions = [
                     { icon: "🎯", label: "定投操作", text: `本周定投 <span class="a-amount">${fmtMoney(fixedAmt)}</span>（基准 × 3）` },
-                    { icon: "🚀", label: "波段加仓", text: `可单笔加仓 <span class="a-amount">${fmtMoney(weeklyBase * 10)}</span>（10 倍基准）；每再跌 2% 加一次，最多 2 次` },
-                    { icon: "✅", label: "止盈规则", text: "反弹至 <b>−5%</b> 卖出波段筹码 30%；回到 <b>0%</b> 卖 50%；达 <b>+5%</b> 全部清仓" },
+                    { icon: "🚀", label: "波段加仓", text: `增量资金单笔加仓 <span class="a-amount">${fmtMoney(weeklyBase * 10)}</span>（10 倍基准）；每再跌 1% 加一次，最多 2 次` },
+                    { icon: "✅", label: "止盈规则", text: "反弹至 <b>−5%</b> 卖出波段筹码 30%；回到 <b>0%</b> 卖 50%；达 <b>+8%</b> 全部清仓" },
                 ];
             } else if (zone === "low") {
                 actions = [
                     { icon: "🎯", label: "定投操作", text: `本周定投 <span class="a-amount">${fmtMoney(fixedAmt)}</span>（基准 × 2）` },
-                    { icon: "📥", label: "波段加仓", text: `可单笔加仓 <span class="a-amount">${fmtMoney(weeklyBase * 5)}</span>（5 倍基准）；每再跌 1% 加一次，最多 3 次` },
-                    { icon: "✅", label: "止盈规则", text: "反弹至 <b>0%</b> 年线时卖出 50%；达 <b>+3%</b> 全部清仓" },
+                    { icon: "📥", label: "波段加仓", text: `有增量资金可单笔加仓 <span class="a-amount">${fmtMoney(weeklyBase * 5)}</span>（5 倍基准）；每再跌 0.5% 加一次，最多 3 次` },
+                    { icon: "✅", label: "止盈规则", text: "加仓筹码反弹至年线 <b>0%</b> 卖出 50%；反弹至 <b>+5%</b> 全部卖出落袋" },
                 ];
             } else if (zone === "neutral") {
                 actions = [
                     { icon: "🎯", label: "定投操作", text: `本周定投 <span class="a-amount">${fmtMoney(fixedAmt)}</span>（基准不增不减）` },
-                    { icon: "💤", label: "波段操作", text: "不做波段，躺平持有，安心吃息" },
+                    { icon: "💤", label: "波段操作", text: "不做任何波段操作，只持有，躺平吃息" },
                 ];
             } else if (zone === "high") {
                 actions = [
                     { icon: "🎯", label: "定投操作", text: `本周定投 <span class="a-amount">${fmtMoney(fixedAmt)}</span>（基准 × 0.5 减半）` },
-                    { icon: "📤", label: "波段减仓", text: "此前低估加仓的波段筹码<b>全部卖出</b>落袋；底仓不动" },
-                    { icon: "⚠️", label: "额外提示", text: "偏离达 <b>+8%</b> 时，可卖出累计定投筹码的 20%，跌回年线再买回" },
+                    { icon: "📤", label: "波段减仓", text: "此前低估加仓的波段筹码<b>全部卖出</b>落袋；无波段筹码则不动底仓" },
+                    { icon: "⚠️", label: "额外操作", text: "偏离度到 <b>+15%</b> 时，可卖出累计定投筹码的 20%，跌回 <b>+8%</b> 再买回" },
                 ];
             } else {
                 actions = [
-                    { icon: "🎯", label: "定投操作", text: `本周定投 <span class="a-amount">${fmtMoney(fixedAmt)}</span>（基准 × 0.2，或直接暂停）` },
-                    { icon: "🏃", label: "大幅减仓", text: "卖出所有波段筹码 + 累计定投筹码的 <b>50%</b>" },
-                    { icon: "🛡️", label: "底仓例外", text: "偏离≥ <b>+15%</b> 时，可卖出永久底仓的 30%，跌回年线以下再买回" },
+                    { icon: "🎯", label: "定投操作", text: `暂停定投，或仅投 <span class="a-amount">${fmtMoney(fixedAmt)}</span>（基准 × 0.2）` },
+                    { icon: "🏃", label: "大幅减仓", text: "所有波段筹码 + 累计定投筹码的 <b>50%</b>，全部卖出落袋" },
+                    { icon: "🛡️", label: "底仓例外", text: "仅当偏离度≥ <b>+25%</b>，可卖出永久底仓的 30%，跌回 <b>+10%</b> 以下再买回" },
                 ];
             }
 
