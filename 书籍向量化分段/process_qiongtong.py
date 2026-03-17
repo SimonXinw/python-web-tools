@@ -126,6 +126,11 @@ def main():
     OUT_MD.write_text(md_content, encoding="utf-8")
     print(f"\n已保存 Markdown → {OUT_MD}  ({len(records)} 条记录，{len(md_content)} 字符)")
 
+    # ── 写入 JSON 文件 ────────────────────────────────────────────────────────
+    out_json = OUT_MD.with_suffix(".json")
+    out_json.write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"已保存 JSON    → {out_json}  ({len(records)} 条记录)")
+
     print("\n─── 前 3 条预览 ───")
     for i, rec in enumerate(records[:3]):
         print(f"\n[{i+1}] {build_heading(rec)}")
