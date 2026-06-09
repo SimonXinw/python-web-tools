@@ -1,0 +1,45 @@
+# Playwright 登录态（含 Cookie，勿提交）
+网页爬虫脚本py/.playwright_gaokao_profile/
+
+# Python 字节码与缓存
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+
+# 虚拟环境
+.venv/
+venv/
+env/
+
+# 测试 / 类型检查缓存
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# 环境变量 / 密钥
+.env
+.env.*
+*.env
+
+# IDE
+.vscode/
+.idea/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 日志 / 临时文件
+*.log
+*.tmp
+*.temp
+~$*.xlsx
+~$*.xls
+
+
+# Playwright 测试报告（若启用 playwright test）
+test-results/
+playwright-report/
+playwright/.cache/

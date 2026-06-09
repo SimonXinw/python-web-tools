@@ -177,7 +177,7 @@
             if (paginationItemElesArr?.length > 0) {
                 const pageSize = Number(paginationItemElesArr[paginationItemElesArr.length - 2].querySelector('a').innerText)
 
-                const nextBtnEle = paginationItemElesArr[paginationItemElesArr.length - 1].querySelector('span')你好啊
+                const nextBtnEle = paginationItemElesArr[paginationItemElesArr.length - 1].querySelector('span')
 
                 console.log('分页数 dom>>>>>>>>', pageSize, '按钮', nextBtnEle)
 
