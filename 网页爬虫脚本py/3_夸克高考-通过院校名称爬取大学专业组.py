@@ -12,9 +12,20 @@ from playwright.async_api import (
     TimeoutError as PlaywrightTimeoutError,
 )
 
+# 爬取目标（修改此处即可切换省份/年份）
+TARGET_PROVINCE = "浙江"
+TARGET_YEAR = "2025"
+TARGET_BATCH = "平行录取一段"
+TARGET_GENRE = ""
+
 # 并发开关：True 时启用多标签页并发；False 时单标签页顺序执行
 ENABLE_CONCURRENT = True
-CONCURRENT_WORKERS = 20
+CONCURRENT_WORKERS = 8
+
+# 状态表落盘：内存更新后由后台定时批量写入，降低 Windows 下 os.replace 冲突
+STATUS_FLUSH_INTERVAL_SEC = 1.0
+FILE_WRITE_MAX_RETRIES = 5
+FILE_WRITE_RETRY_DELAY_SEC = 0.3
 
 # 结果表列名 -> 普通高校源表列名（遍历当前行动态读取，非写死）
 SOURCE_INFO_COLUMN_MAP = {
@@ -43,15 +54,27 @@ RESULT_COLUMNS = [
 
 MAJOR_NAME_INDEX = RESULT_COLUMNS.index("专业")
 
-REQUIRED_FILTER_VALUES = {
-    "省份": "江西",
-    "年份": "2025",
-}
 
-VALUE_ONLY_FILTERS = ["批次"]
+def merge_major_with_remark(major_name, remark):
+    """有备注时返回「专业-备注」，无备注时仅返回专业名。"""
+    major_text = str(major_name or "").strip()
+    remark_text = str(remark or "").strip()
+    if remark_text:
+        return f"{major_text}-{remark_text}"
+    return major_text
+
+
+VALUE_ONLY_FILTERS = ["批次", "科类"]
 SKIP_STATUSES = {"成功", "无效数据", "本省未招生", "失败-无数据"}
 
 MAJOR_CARD_SELECTOR = ".card-padding-zhuanye:has(.qk-title-text:has-text('专业分数线'))"
+NO_ENROLLMENT_HINT_SELECTOR = ".nodata-fenshuxian"
+NO_ENROLLMENT_HINT_TEXT = "该地区暂无专业录取信息"
+SCORE_LOADING_SELECTOR = ".qk-loading.qk-loading-container"
+SCORE_LOADING_APPEAR_TIMEOUT_MS = 3000
+SCORE_LOADING_DISAPPEAR_TIMEOUT_MS = 8000
+FILTER_VALUE_POLL_COUNT = 15
+FILTER_VALUE_POLL_INTERVAL = 0.2
 
 FILTER_TAB_SELECTORS = {
     "省份": ".select-tabs-tab-chengshi",
@@ -60,24 +83,51 @@ FILTER_TAB_SELECTORS = {
     "科类": ".select-tabs-tab-kemu",
 }
 
+FILTER_HAS_VALUE_LOCATORS = {
+    "批次": ".qk-button-title",
+    "科类": ".select-tabs-genre",
+}
+
+
+def build_quark_result_path(output_dir, province, year):
+    return os.path.join(output_dir, f"夸克-{province}-{year}-院校专业表.csv")
+
 
 class QuarkMajorsScraper:
     def __init__(
         self,
         school_source_path,
         status_save_path,
-        result_path,
+        result_path=None,
+        target_province=TARGET_PROVINCE,
+        target_year=TARGET_YEAR,
+        target_batch=TARGET_BATCH,
+        target_genre=TARGET_GENRE,
         enable_concurrent=ENABLE_CONCURRENT,
         concurrent_workers=CONCURRENT_WORKERS,
     ):
         self.school_source_path = school_source_path
         self.status_save_path = status_save_path
+        self.target_province = target_province
+        self.target_year = target_year
+        self.target_batch = target_batch
+        self.target_genre = target_genre
+        self.required_filter_values = {
+            "省份": target_province,
+            "年份": target_year,
+        }
+        if result_path is None:
+            output_dir = os.path.dirname(os.path.abspath(school_source_path))
+            result_path = build_quark_result_path(
+                output_dir, target_province, target_year
+            )
         self.result_path = result_path
         self.enable_concurrent = enable_concurrent
         self.concurrent_workers = max(1, concurrent_workers if enable_concurrent else 1)
 
         self.df = None
         self._save_lock = threading.Lock()
+        self._status_dirty = False
         self._progress_lock = threading.Lock()
         self._total_schools = 0
         self._total_pending = 0
@@ -85,12 +135,115 @@ class QuarkMajorsScraper:
         self._started_count = 0
         self._finished_count = 0
 
-    def _load_status_dataframe(self):
-        if not os.path.exists(self.status_save_path):
-            return pd.read_excel(self.school_source_path)
+    def _read_source_table(self, file_path):
+        if file_path.endswith(".csv"):
+            return pd.read_csv(file_path, encoding="utf-8-sig")
+        if file_path.endswith(".xlsx"):
+            return pd.read_excel(file_path, engine="openpyxl")
+        return pd.read_excel(file_path)
+
+    def _atomic_replace_file(self, file_path, write_fn, label="文件"):
+        temp_path = f"{file_path}.tmp"
+        last_err = None
+
+        for attempt in range(FILE_WRITE_MAX_RETRIES):
+            try:
+                write_fn(temp_path)
+                os.replace(temp_path, file_path)
+                return
+            except PermissionError as err:
+                last_err = err
+                if attempt < FILE_WRITE_MAX_RETRIES - 1:
+                    delay = FILE_WRITE_RETRY_DELAY_SEC * (attempt + 1)
+                    print(
+                        f"【警告】{label}写入被占用，"
+                        f"{delay:.1f}s 后重试 ({attempt + 1}/{FILE_WRITE_MAX_RETRIES})"
+                    )
+                    time.sleep(delay)
+            finally:
+                if os.path.exists(temp_path):
+                    try:
+                        os.remove(temp_path)
+                    except OSError:
+                        pass
+
+        raise last_err
+
+    def _save_status_dataframe(self):
+        def write_status(temp_path):
+            self.df.to_csv(temp_path, index=False, encoding="utf-8-sig")
+
+        self._atomic_replace_file(
+            self.status_save_path, write_status, label="状态表"
+        )
+
+    def _flush_status_to_disk(self):
+        with self._save_lock:
+            if not self._status_dirty:
+                return False
+            self._save_status_dataframe()
+            self._status_dirty = False
+            return True
+
+    async def _status_flush_loop(self, stop_event):
+        while True:
+            try:
+                self._flush_status_to_disk()
+            except PermissionError as err:
+                with self._save_lock:
+                    self._status_dirty = True
+                print(f"【警告】状态表落盘失败，将在下次定时重试: {err}")
+
+            if stop_event.is_set():
+                break
+            await asyncio.sleep(STATUS_FLUSH_INTERVAL_SEC)
 
         try:
-            return pd.read_excel(self.status_save_path, engine="openpyxl")
+            self._flush_status_to_disk()
+        except PermissionError as err:
+            with self._save_lock:
+                self._status_dirty = True
+            print(f"【警告】退出前状态表落盘失败: {err}")
+
+    def _migrate_legacy_xlsx_status(self):
+        legacy_xlsx = f"{os.path.splitext(self.status_save_path)[0]}.xlsx"
+        if not os.path.exists(legacy_xlsx):
+            return False
+
+        try:
+            status_df = pd.read_excel(legacy_xlsx, engine="openpyxl")
+        except Exception as err:
+            backup_path = f"{legacy_xlsx}.corrupt.bak"
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+            os.replace(legacy_xlsx, backup_path)
+            print(
+                f"【警告】旧 xlsx 状态表已损坏，已备份为 {os.path.basename(backup_path)}"
+                f"（原因: {err}）"
+            )
+            return False
+
+        temp_path = f"{self.status_save_path}.tmp"
+        status_df.to_csv(temp_path, index=False, encoding="utf-8-sig")
+        os.replace(temp_path, self.status_save_path)
+        backup_path = f"{legacy_xlsx}.bak"
+        if os.path.exists(backup_path):
+            os.remove(backup_path)
+        os.replace(legacy_xlsx, backup_path)
+        print(
+            f"【提示】已将旧 xlsx 状态表迁移为 csv，保留 {len(status_df)} 行，"
+            f"旧文件备份为 {os.path.basename(backup_path)}"
+        )
+        return True
+
+    def _load_status_dataframe(self):
+        if not os.path.exists(self.status_save_path):
+            if self._migrate_legacy_xlsx_status():
+                return pd.read_csv(self.status_save_path, encoding="utf-8-sig")
+            return self._read_source_table(self.school_source_path)
+
+        try:
+            return pd.read_csv(self.status_save_path, encoding="utf-8-sig")
         except Exception as err:
             backup_path = f"{self.status_save_path}.corrupt.bak"
             if os.path.exists(backup_path):
@@ -100,7 +253,9 @@ class QuarkMajorsScraper:
                 f"【警告】状态文件已损坏，已备份为 {os.path.basename(backup_path)}，"
                 f"将从 普通高校.xls 重新初始化（原因: {err}）"
             )
-            return pd.read_excel(self.school_source_path)
+            if self._migrate_legacy_xlsx_status():
+                return pd.read_csv(self.status_save_path, encoding="utf-8-sig")
+            return self._read_source_table(self.school_source_path)
 
     def _init_source_excel(self):
         self.df = self._load_status_dataframe()
@@ -123,22 +278,25 @@ class QuarkMajorsScraper:
         return school_info
 
     def _create_empty_result_file(self):
-        if self.result_path.endswith(".csv"):
-            with open(
-                self.result_path, mode="w", encoding="utf-8-sig", newline=""
-            ) as f:
-                writer = csv.writer(f)
-                writer.writerow(RESULT_COLUMNS)
-            return
-
-        pd.DataFrame(columns=RESULT_COLUMNS).to_excel(
-            self.result_path, index=False, engine="openpyxl"
-        )
+        with open(
+            self.result_path, mode="w", encoding="utf-8-sig", newline=""
+        ) as f:
+            writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
+            writer.writerow(RESULT_COLUMNS)
 
     def _read_result_dataframe(self, file_path):
-        if file_path.endswith(".csv"):
+        try:
             return pd.read_csv(file_path, encoding="utf-8-sig")
-        return pd.read_excel(file_path, engine="openpyxl")
+        except Exception as err:
+            backup_path = f"{file_path}.corrupt.bak"
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+            os.replace(file_path, backup_path)
+            print(
+                f"【警告】结果文件已损坏，已备份为 {os.path.basename(backup_path)}，"
+                f"将重建空表（原因: {err}）"
+            )
+            return pd.DataFrame(columns=RESULT_COLUMNS)
 
     def _migrate_result_dataframe(self, existing_df):
         if existing_df is None or existing_df.empty:
@@ -166,19 +324,49 @@ class QuarkMajorsScraper:
         return migrated_df[RESULT_COLUMNS]
 
     def _save_result_dataframe(self, result_df):
-        temp_path = self.result_path.replace(".xlsx", ".tmp.xlsx").replace(
-            ".csv", ".tmp.csv"
-        )
-        if self.result_path.endswith(".csv"):
+        def write_result(temp_path):
             result_df.to_csv(temp_path, index=False, encoding="utf-8-sig")
-        else:
-            result_df.to_excel(temp_path, index=False, engine="openpyxl")
-        os.replace(temp_path, self.result_path)
+
+        self._atomic_replace_file(
+            self.result_path, write_result, label="结果表"
+        )
+
+    def _migrate_legacy_xlsx_result(self):
+        legacy_xlsx = f"{os.path.splitext(self.result_path)[0]}.xlsx"
+        if not os.path.exists(legacy_xlsx):
+            return False
+
+        try:
+            existing_df = pd.read_excel(legacy_xlsx, engine="openpyxl")
+        except Exception as err:
+            backup_path = f"{legacy_xlsx}.corrupt.bak"
+            if os.path.exists(backup_path):
+                os.remove(backup_path)
+            os.replace(legacy_xlsx, backup_path)
+            print(
+                f"【警告】旧 xlsx 结果表已损坏，已备份为 {os.path.basename(backup_path)}"
+                f"（原因: {err}）"
+            )
+            return False
+
+        migrated_df = self._migrate_result_dataframe(existing_df)
+        self._save_result_dataframe(migrated_df)
+        backup_path = f"{legacy_xlsx}.bak"
+        if os.path.exists(backup_path):
+            os.remove(backup_path)
+        os.replace(legacy_xlsx, backup_path)
+        print(
+            f"【提示】已将旧 xlsx 结果表迁移为 csv，保留 {len(migrated_df)} 行，"
+            f"旧文件备份为 {os.path.basename(backup_path)}"
+        )
+        return True
 
     def _init_result_file(self):
         if not os.path.exists(self.result_path):
+            if self._migrate_legacy_xlsx_result():
+                return
             self._create_empty_result_file()
-            print("【提示】结果表不存在，已创建空表，后续仅追加写入")
+            print("【提示】结果表不存在，已创建空 csv，后续仅追加写入")
             return
 
         existing_df = self._read_result_dataframe(self.result_path)
@@ -218,7 +406,8 @@ class QuarkMajorsScraper:
     def _build_url(self, school_name):
         encoded_school = quote(school_name)
         jihuaparams = quote(
-            '{"province":"江西","year":"2025","batch":"本科批","genre":"首选物理"}'
+            f'{{"province":"{self.target_province}","year":"{self.target_year}",'
+            f'"batch":"{self.target_batch}","genre":"{self.target_genre}"}}'
         )
         return (
             "https://vt.quark.cn/blm/gaokao-college-794/tab"
@@ -228,30 +417,37 @@ class QuarkMajorsScraper:
     def _save_status(self, row_index, status):
         with self._save_lock:
             self.df.at[row_index, "状态"] = status
-            temp_path = self.status_save_path.replace(".xlsx", ".tmp.xlsx")
-            self.df.to_excel(temp_path, index=False, engine="openpyxl")
-            os.replace(temp_path, self.status_save_path)
+            self._status_dirty = True
 
     def _append_result_rows(self, rows_data):
         if not rows_data:
             return
 
         with self._save_lock:
-            if self.result_path.endswith(".csv"):
-                with open(
-                    self.result_path, mode="a", encoding="utf-8-sig", newline=""
-                ) as f:
-                    writer = csv.writer(f)
-                    writer.writerows(rows_data)
-                return
-
-            from openpyxl import load_workbook
-
-            workbook = load_workbook(self.result_path)
-            worksheet = workbook.active
-            for row_data in rows_data:
-                worksheet.append(row_data)
-            workbook.save(self.result_path)
+            last_err = None
+            for attempt in range(FILE_WRITE_MAX_RETRIES):
+                try:
+                    with open(
+                        self.result_path,
+                        mode="a",
+                        encoding="utf-8-sig",
+                        newline="",
+                    ) as f:
+                        writer = csv.writer(f, quoting=csv.QUOTE_MINIMAL)
+                        writer.writerows(rows_data)
+                        f.flush()
+                        os.fsync(f.fileno())
+                    return
+                except PermissionError as err:
+                    last_err = err
+                    if attempt < FILE_WRITE_MAX_RETRIES - 1:
+                        delay = FILE_WRITE_RETRY_DELAY_SEC * (attempt + 1)
+                        print(
+                            f"【警告】结果表追加被占用，"
+                            f"{delay:.1f}s 后重试 ({attempt + 1}/{FILE_WRITE_MAX_RETRIES})"
+                        )
+                        time.sleep(delay)
+            raise last_err
 
     async def _get_locator_text(self, locator):
         if await locator.count() == 0:
@@ -272,7 +468,7 @@ class QuarkMajorsScraper:
             )
         return text.strip()
 
-    async def _get_page_school_name(self, page, timeout=4000):
+    async def _get_page_school_name(self, page, timeout=5000):
         name_locator = page.locator(".university-logo-left .qk-title-text em")
         try:
             await name_locator.first.wait_for(state="visible", timeout=timeout)
@@ -327,7 +523,7 @@ class QuarkMajorsScraper:
         return bool(actual_text) and actual_text != expected
 
     def _validate_card_filters(self, filters):
-        for key, expected in REQUIRED_FILTER_VALUES.items():
+        for key, expected in self.required_filter_values.items():
             actual = str(filters.get(key, "")).strip()
             if actual != expected:
                 return False, key, expected, actual
@@ -339,35 +535,85 @@ class QuarkMajorsScraper:
 
         return True, "", "", ""
 
+    async def _is_no_enrollment_display_block(self, card):
+        no_data = card.locator(NO_ENROLLMENT_HINT_SELECTOR)
+        if await no_data.count() == 0:
+            return False
+
+        return await no_data.first.evaluate(
+            """(el) => {
+                const style = window.getComputedStyle(el);
+                return style.display === "block"
+                    || el.classList.contains("qk-display-block");
+            }"""
+        )
+
+    async def _is_score_loading_visible(self, card):
+        loading = card.locator(SCORE_LOADING_SELECTOR)
+        if await loading.count() == 0:
+            return False
+        return await loading.first.is_visible()
+
+    async def _wait_for_score_module_settled(self, card, school_name):
+        loading = card.locator(SCORE_LOADING_SELECTOR)
+        loading_appeared = False
+
+        appear_deadline = time.monotonic() + SCORE_LOADING_APPEAR_TIMEOUT_MS / 1000
+        while time.monotonic() < appear_deadline:
+            if await self._is_score_loading_visible(card):
+                loading_appeared = True
+                break
+            await asyncio.sleep(FILTER_VALUE_POLL_INTERVAL)
+
+        if loading_appeared:
+            try:
+                await loading.first.wait_for(
+                    state="hidden", timeout=SCORE_LOADING_DISAPPEAR_TIMEOUT_MS
+                )
+            except PlaywrightTimeoutError:
+                return False, "load", "分数模块loading未消失"
+        else:
+            await asyncio.sleep(0.5)
+
+        if await self._is_no_enrollment_display_block(card):
+            filters = await self._get_card_filters(card)
+            self._log_card_filters(filters, "分数模块加载后nodata显示", school_name)
+            return False, "no_enrollment", "nodata-fenshuxian显示"
+
+        return True, "", ""
+
     async def _wait_for_filter_has_value(self, card, field_name, school_name):
         tab_selector = FILTER_TAB_SELECTORS[field_name]
-        title_locator = card.locator(f"{tab_selector} .qk-button-title").first
+        value_selector = FILTER_HAS_VALUE_LOCATORS.get(
+            field_name, ".qk-button-title"
+        )
+        value_locator = card.locator(f"{tab_selector} {value_selector}").first
 
         try:
-            await title_locator.wait_for(state="visible", timeout=3000)
+            await value_locator.wait_for(state="visible", timeout=5000)
         except PlaywrightTimeoutError:
             filters = await self._get_card_filters(card)
             self._log_card_filters(filters, f"{field_name}筛选框未出现", school_name)
-            return False, f"{field_name}筛选框未出现", filters
+            return False, "load", f"{field_name}筛选框未出现", filters
 
-        for _ in range(15):
+        for _ in range(FILTER_VALUE_POLL_COUNT):
             filters = await self._get_card_filters(card)
             actual = str(filters.get(field_name, "")).strip()
             if actual:
                 self._log_card_filters(filters, f"{field_name}有值", school_name)
-                return True, "", filters
-            await asyncio.sleep(0.2)
+                return True, "", "", filters
+            await asyncio.sleep(FILTER_VALUE_POLL_INTERVAL)
 
         filters = await self._get_card_filters(card)
         self._log_card_filters(filters, f"{field_name}值未就绪", school_name)
-        return False, f"{field_name}值为空", filters
+        return False, "load", f"{field_name}值为空", filters
 
     async def _wait_for_filter_value(self, card, field_name, expected_value, school_name):
         tab_selector = FILTER_TAB_SELECTORS[field_name]
         title_locator = card.locator(f"{tab_selector} .qk-button-title").first
 
         try:
-            await title_locator.wait_for(state="visible", timeout=3000)
+            await title_locator.wait_for(state="visible", timeout=5000)
         except PlaywrightTimeoutError:
             filters = await self._get_card_filters(card)
             self._log_card_filters(filters, f"{field_name}筛选框未出现", school_name)
@@ -399,7 +645,7 @@ class QuarkMajorsScraper:
     async def _wait_for_card_filters(self, card, school_name):
         province_ready, province_error_type, province_error, filters = (
             await self._wait_for_filter_value(
-                card, "省份", REQUIRED_FILTER_VALUES["省份"], school_name
+                card, "省份", self.required_filter_values["省份"], school_name
             )
         )
         if not province_ready:
@@ -407,18 +653,25 @@ class QuarkMajorsScraper:
 
         year_ready, year_error_type, year_error, filters = (
             await self._wait_for_filter_value(
-                card, "年份", REQUIRED_FILTER_VALUES["年份"], school_name
+                card, "年份", self.required_filter_values["年份"], school_name
             )
         )
         if not year_ready:
             return False, year_error_type, year_error, filters
 
+        module_ready, module_error_type, module_error = (
+            await self._wait_for_score_module_settled(card, school_name)
+        )
+        if not module_ready:
+            filters = await self._get_card_filters(card)
+            return False, module_error_type, module_error, filters
+
         for field_name in VALUE_ONLY_FILTERS:
-            value_ready, value_error, filters = await self._wait_for_filter_has_value(
-                card, field_name, school_name
+            value_ready, value_error_type, value_error, filters = (
+                await self._wait_for_filter_has_value(card, field_name, school_name)
             )
             if not value_ready:
-                return False, "load", value_error, filters
+                return False, value_error_type, value_error, filters
 
         filters = await self._get_card_filters(card)
         self._log_card_filters(filters, "筛选就绪", school_name)
@@ -426,6 +679,22 @@ class QuarkMajorsScraper:
 
     def _get_major_card(self, page):
         return page.locator(MAJOR_CARD_SELECTOR).first
+
+    async def _has_no_local_enrollment_hint(self, card):
+        no_data = card.locator(NO_ENROLLMENT_HINT_SELECTOR)
+        if await no_data.count() == 0:
+            return False
+        if not await no_data.first.is_visible():
+            return False
+
+        hint_text = await self._get_locator_text(
+            no_data.locator(".doudi-title .qk-paragraph-text")
+        )
+        if hint_text == NO_ENROLLMENT_HINT_TEXT:
+            return True
+
+        block_text = await self._get_locator_text(no_data.first)
+        return NO_ENROLLMENT_HINT_TEXT in block_text
 
     async def _parse_major_row(
         self, row, filters, school_name, page_school_name, school_info
@@ -453,6 +722,8 @@ class QuarkMajorsScraper:
         if not major_name:
             return None
 
+        major_display = merge_major_with_remark(major_name, remark)
+
         return [
             school_name,
             page_school_name,
@@ -465,7 +736,7 @@ class QuarkMajorsScraper:
             filters["批次"],
             filters["科类"],
             subject_requirement,
-            major_name,
+            major_display,
             low_score,
             low_rank,
             enroll_count,
@@ -479,7 +750,7 @@ class QuarkMajorsScraper:
 
         try:
             await page.bring_to_front()
-            await asyncio.sleep(random.uniform(0.1, 0.5))
+            await asyncio.sleep(random.uniform(0.1, 0.32))
             await page.goto(url, wait_until="domcontentloaded")
 
             page_school_name = await self._get_page_school_name(page)
@@ -503,7 +774,7 @@ class QuarkMajorsScraper:
 
             card = self._get_major_card(page)
             try:
-                await card.wait_for(state="visible", timeout=8000)
+                await card.wait_for(state="visible", timeout=10000)
             except PlaywrightTimeoutError:
                 print(
                     f"[W{worker_id}] 【失败】未找到专业分数线模块: {school_name}"
@@ -528,10 +799,19 @@ class QuarkMajorsScraper:
                 if error_type == "invalid":
                     print(
                         f"[W{worker_id}] 【无效数据】{filter_error}，"
-                        f"非江西/2025: {school_name}"
+                        f"非{self.target_province}/{self.target_year}: {school_name}"
                     )
                     self._save_status(row_index, "无效数据")
                     result_text = "无效数据"
+                elif error_type == "no_enrollment":
+                    print(
+                        f"[W{worker_id}] 【本省未招生】"
+                        f"{self.target_province}/{self.target_year} 已就绪，"
+                        f"分数模块 loading 消失后 nodata-fenshuxian 为 display:block: "
+                        f"{school_name}"
+                    )
+                    self._save_status(row_index, "本省未招生")
+                    result_text = "本省未招生"
                 else:
                     print(f"[W{worker_id}] 【失败】{filter_error}: {school_name}")
                     self._save_status(row_index, "失败-未加载")
@@ -544,7 +824,7 @@ class QuarkMajorsScraper:
             if not filter_ok:
                 self._log_card_filters(filters, "校验失败", school_name)
                 actual_text = str(actual).strip()
-                if filter_key in REQUIRED_FILTER_VALUES and actual_text:
+                if filter_key in self.required_filter_values and actual_text:
                     print(
                         f"[W{worker_id}] 【无效数据】「{filter_key}」"
                         f"期望「{expected}」实际「{actual_text}」: {school_name}"
@@ -567,6 +847,17 @@ class QuarkMajorsScraper:
 
             major_rows = card.locator(".content-List-li")
             row_count = await major_rows.count()
+            has_no_enrollment_hint = await self._has_no_local_enrollment_hint(card)
+
+            if row_count == 0 and has_no_enrollment_hint:
+                print(
+                    f"[W{worker_id}] 【本省未招生】"
+                    f"{self.target_province}/{self.target_year} 下无专业列表，"
+                    f"且出现「{NO_ENROLLMENT_HINT_TEXT}」: {school_name}"
+                )
+                self._save_status(row_index, "本省未招生")
+                result_text = "本省未招生"
+                return
 
             school_info = self._get_school_info(row_index)
             results = []
@@ -638,7 +929,7 @@ class QuarkMajorsScraper:
 
             self._mark_task_started(school_name, worker_id)
             await self._scrape_school(page, row_index, school_name, worker_id)
-            await asyncio.sleep(random.uniform(1.5, 3.0))
+            await asyncio.sleep(random.uniform(1, 2))
 
     async def _run_async(self):
         start_time = time.time()
@@ -691,39 +982,57 @@ class QuarkMajorsScraper:
             else "单标签页顺序执行"
         )
         print(
-            f"\n>>>> 院校总计 {self._total_schools} 所 | "
+            f"\n>>>> 目标 {self.target_province}/{self.target_year} | "
+            f"结果表 {os.path.basename(self.result_path)}"
+        )
+        print(
+            f">>>> 院校总计 {self._total_schools} 所 | "
             f"已成功 {success_count} | 无效数据 {invalid_count} | "
             f"本省未招生 {no_enrollment_count} | "
             f"跳过 {skip_count} | 本次待爬 {self._total_pending} 所"
         )
         print(f">>>> 模式：{mode_text}")
+        print(
+            f">>>> 状态表落盘：内存更新，每 {STATUS_FLUSH_INTERVAL_SEC:g}s 批量写入一次"
+        )
 
-        async with async_playwright() as playwright:
-            browser = await playwright.chromium.launch(headless=False)
-            context = await browser.new_context(
-                viewport={"width": 1920, "height": 1080}
-            )
+        stop_status_flush = asyncio.Event()
+        status_flush_task = asyncio.create_task(
+            self._status_flush_loop(stop_status_flush)
+        )
 
-            print(f"\n正在打开 {self.concurrent_workers} 个并发标签页...")
-            worker_pages = await self._init_worker_pages(context)
-
-            queue = asyncio.Queue()
-            for task in pending_tasks:
-                await queue.put(task)
-
-            workers = [
-                asyncio.create_task(
-                    self._worker(worker_id + 1, worker_pages[worker_id], queue)
+        try:
+            async with async_playwright() as playwright:
+                browser = await playwright.chromium.launch(headless=False)
+                context = await browser.new_context(
+                    viewport={"width": 1920, "height": 1080}
                 )
-                for worker_id in range(self.concurrent_workers)
-            ]
-            await asyncio.gather(*workers)
 
-            for page in worker_pages:
-                if not page.is_closed():
-                    await page.close()
-            await context.close()
-            await browser.close()
+                print(f"\n正在打开 {self.concurrent_workers} 个并发标签页...")
+                worker_pages = await self._init_worker_pages(context)
+
+                queue = asyncio.Queue()
+                for task in pending_tasks:
+                    await queue.put(task)
+
+                workers = [
+                    asyncio.create_task(
+                        self._worker(
+                            worker_id + 1, worker_pages[worker_id], queue
+                        )
+                    )
+                    for worker_id in range(self.concurrent_workers)
+                ]
+                await asyncio.gather(*workers)
+
+                for page in worker_pages:
+                    if not page.is_closed():
+                        await page.close()
+                await context.close()
+                await browser.close()
+        finally:
+            stop_status_flush.set()
+            await status_flush_task
 
         end_time = time.time()
         print(
@@ -740,13 +1049,15 @@ if __name__ == "__main__":
     current_dir = os.path.dirname(os.path.abspath(__file__))
 
     school_source_path = os.path.join(current_dir, "普通高校.xls")
-    status_save_path = os.path.join(current_dir, "普通高校.xlsx")
-    result_path = os.path.join(current_dir, "夸克-江西-院校专业表.xlsx")
+    status_save_path = os.path.join(current_dir, "普通高校.csv")
 
     scraper = QuarkMajorsScraper(
         school_source_path=school_source_path,
         status_save_path=status_save_path,
-        result_path=result_path,
+        target_province=TARGET_PROVINCE,
+        target_year=TARGET_YEAR,
+        target_batch=TARGET_BATCH,
+        target_genre=TARGET_GENRE,
         enable_concurrent=ENABLE_CONCURRENT,
         concurrent_workers=CONCURRENT_WORKERS,
     )
