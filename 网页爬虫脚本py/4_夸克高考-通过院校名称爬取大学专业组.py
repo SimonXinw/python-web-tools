@@ -13,36 +13,60 @@ from playwright.async_api import (
 )
 
 # 爬取目标（修改此处即可切换省份/年份）
-TARGET_PROVINCE = "浙江"
+TARGET_PROVINCE = "江西"
 TARGET_YEAR = "2025"
-TARGET_BATCH = "平行录取一段"
-TARGET_GENRE = ""
+TARGET_BATCH = "本科批"
+TARGET_GENRE = "首选物理"
 
 # 并发开关：True 时启用多标签页并发；False 时单标签页顺序执行
 ENABLE_CONCURRENT = True
-CONCURRENT_WORKERS = 8
+CONCURRENT_WORKERS = 20
 
 # 状态表落盘：内存更新后由后台定时批量写入，降低 Windows 下 os.replace 冲突
 STATUS_FLUSH_INTERVAL_SEC = 1.0
 FILE_WRITE_MAX_RETRIES = 5
 FILE_WRITE_RETRY_DELAY_SEC = 0.3
 
-# 结果表列名 -> 普通高校源表列名（遍历当前行动态读取，非写死）
-SOURCE_INFO_COLUMN_MAP = {
-    "主管部门": "主管部门",
-    "所在地": "所在地",
-    "办学层次": "办学层次",
-    "院校备注": "备注",
+# 结果表：源表带入字段
+SOURCE_INFO_RESULT_COLUMNS = [
+    "主管部门",
+]
+
+# 结果表：新源表额外字段（普通高校.csv 遍历时带入，不含序号/学校名称/状态）
+# 源表「省份」写入「院校省份」，避免与爬取筛选条件「省份」重名
+SOURCE_EXTRA_RESULT_COLUMNS = [
+    "院校省份",
+    "城市",
+    "985",
+    "211",
+    "双一流",
+    "类型",
+    "层次",
+    "性质",
+]
+
+SOURCE_EXTRA_COLUMN_MAP = {
+    "院校省份": "省份",
+    "城市": "城市",
+    "985": "985",
+    "211": "211",
+    "双一流": "双一流",
+    "类型": "类型",
+    "层次": "层次",
+    "性质": "性质",
 }
+
+CSV_READ_ENCODINGS = ("utf-8-sig", "utf-8", "gbk", "gb18030")
 
 RESULT_COLUMNS = [
     "查询院校名称",
     "页面院校名称",
-    *SOURCE_INFO_COLUMN_MAP.keys(),
+    *SOURCE_INFO_RESULT_COLUMNS,
+    *SOURCE_EXTRA_RESULT_COLUMNS,
     "省份",
-    "年份",
     "批次",
     "科类",
+    "专业组",
     "选科要求",
     "专业",
     "最低分",
@@ -53,23 +77,57 @@ RESULT_COLUMNS = [
 ]
 
 MAJOR_NAME_INDEX = RESULT_COLUMNS.index("专业")
+MAJOR_GROUP_INDEX = RESULT_COLUMNS.index("专业组")
 
 
-def merge_major_with_remark(major_name, remark):
-    """有备注时返回「专业-备注」，无备注时仅返回专业名。"""
+def read_csv_with_encodings(file_path):
+    last_err = None
+    for encoding in CSV_READ_ENCODINGS:
+        try:
+            return pd.read_csv(file_path, encoding=encoding)
+        except UnicodeDecodeError as err:
+            last_err = err
+    raise last_err
+
+
+def format_major_plan_entry(major_name, remark, plan_count):
+    """招生计划专业条目：专业名-(备注)-人数。"""
     major_text = str(major_name or "").strip()
     remark_text = str(remark or "").strip()
+    count_text = str(plan_count or "").strip()
+
+    if remark_text and not remark_text.startswith("("):
+        remark_text = f"({remark_text})"
+
     if remark_text:
-        return f"{major_text}-{remark_text}"
-    return major_text
+        entry = f"{major_text}-{remark_text}"
+    else:
+        entry = major_text
+
+    if count_text:
+        return f"{entry}-{count_text}"
+    return entry
 
 
 VALUE_ONLY_FILTERS = ["批次", "科类"]
 SKIP_STATUSES = {"成功", "无效数据", "本省未招生", "失败-无数据"}
 
-MAJOR_CARD_SELECTOR = ".card-padding-zhuanye:has(.qk-title-text:has-text('专业分数线'))"
+PLAN_CARD_SELECTOR = ".quark-page-wrapper-ZhaoShengJiHua .zhaoshengjihua-card"
+PLAN_CARD_READY_SIGNALS = [
+    ".select-tabs-jihua",
+    ".select-tabs-tab-chengshi",
+    ".major-group-list",
+    ".pc-zhaosheng",
+]
+PLAN_CARD_READY_TIMEOUT_MS = 20000
+MAJOR_GROUP_ITEM_SELECTOR = ".major-group-list .major-group-item"
+PLAN_LIST_SELECTOR = ".pc-zhaosheng .content-List-li"
 NO_ENROLLMENT_HINT_SELECTOR = ".nodata-fenshuxian"
-NO_ENROLLMENT_HINT_TEXT = "该地区暂无专业录取信息"
+NO_ENROLLMENT_HINT_TEXTS = ("该地区暂无专业录取信息", "暂无相关数据")
+MAJOR_GROUP_CHANGE_TIMEOUT_MS = 3000
+MAJOR_GROUP_CHANGE_DEBOUNCE_SEC = 0.2
+MAJOR_GROUP_CLICK_SETTLE_SEC = 0.1
+PLAN_LIST_READY_TIMEOUT_MS = 10000
 SCORE_LOADING_SELECTOR = ".qk-loading.qk-loading-container"
 SCORE_LOADING_APPEAR_TIMEOUT_MS = 3000
 SCORE_LOADING_DISAPPEAR_TIMEOUT_MS = 8000
@@ -90,10 +148,10 @@ FILTER_HAS_VALUE_LOCATORS = {
 
 
 def build_quark_result_path(output_dir, province, year):
-    return os.path.join(output_dir, f"夸克-{province}-{year}-院校专业表.csv")
+    return os.path.join(output_dir, f"夸克-{province}-{year}-院校专业组表.csv")
 
 
-class QuarkMajorsScraper:
+class QuarkMajorGroupsScraper:
     def __init__(
         self,
         school_source_path,
@@ -137,7 +195,7 @@ class QuarkMajorsScraper:
 
     def _read_source_table(self, file_path):
         if file_path.endswith(".csv"):
-            return pd.read_csv(file_path, encoding="utf-8-sig")
+            return read_csv_with_encodings(file_path)
         if file_path.endswith(".xlsx"):
             return pd.read_excel(file_path, engine="openpyxl")
         return pd.read_excel(file_path)
@@ -239,11 +297,11 @@ class QuarkMajorsScraper:
     def _load_status_dataframe(self):
         if not os.path.exists(self.status_save_path):
             if self._migrate_legacy_xlsx_status():
-                return pd.read_csv(self.status_save_path, encoding="utf-8-sig")
+                return read_csv_with_encodings(self.status_save_path)
             return self._read_source_table(self.school_source_path)
 
         try:
-            return pd.read_csv(self.status_save_path, encoding="utf-8-sig")
+            return read_csv_with_encodings(self.status_save_path)
         except Exception as err:
             backup_path = f"{self.status_save_path}.corrupt.bak"
             if os.path.exists(backup_path):
@@ -251,10 +309,10 @@ class QuarkMajorsScraper:
             os.replace(self.status_save_path, backup_path)
             print(
                 f"【警告】状态文件已损坏，已备份为 {os.path.basename(backup_path)}，"
-                f"将从 普通高校.xls 重新初始化（原因: {err}）"
+                f"将从源表重新初始化（原因: {err}）"
             )
             if self._migrate_legacy_xlsx_status():
-                return pd.read_csv(self.status_save_path, encoding="utf-8-sig")
+                return read_csv_with_encodings(self.status_save_path)
             return self._read_source_table(self.school_source_path)
 
     def _init_source_excel(self):
@@ -263,18 +321,29 @@ class QuarkMajorsScraper:
             self.df["状态"] = ""
         self.df["状态"] = self.df["状态"].fillna("").astype(str)
 
+    @staticmethod
+    def _normalize_cell_value(value):
+        if pd.isna(value):
+            return ""
+        if isinstance(value, float) and value == int(value):
+            text = str(int(value))
+        else:
+            text = str(value).strip()
+        if text.lower() == "nan":
+            return ""
+        if text.endswith(".0") and text[:-2].isdigit():
+            text = text[:-2]
+        return text
+
     def _get_school_info(self, row_index):
         row = self.df.loc[row_index]
-        school_info = {}
-        for result_col, source_col in SOURCE_INFO_COLUMN_MAP.items():
-            value = row.get(source_col, "")
-            if pd.isna(value):
-                value = ""
-            else:
-                value = str(value).strip()
-                if value.lower() == "nan":
-                    value = ""
-            school_info[result_col] = value
+        school_info = {
+            "主管部门": self._normalize_cell_value(row.get("主管部门", "")),
+        }
+        for result_col, source_col in SOURCE_EXTRA_COLUMN_MAP.items():
+            school_info[result_col] = self._normalize_cell_value(
+                row.get(source_col, "")
+            )
         return school_info
 
     def _create_empty_result_file(self):
@@ -286,7 +355,7 @@ class QuarkMajorsScraper:
 
     def _read_result_dataframe(self, file_path):
         try:
-            return pd.read_csv(file_path, encoding="utf-8-sig")
+            return read_csv_with_encodings(file_path)
         except Exception as err:
             backup_path = f"{file_path}.corrupt.bak"
             if os.path.exists(backup_path):
@@ -313,13 +382,8 @@ class QuarkMajorsScraper:
             else:
                 migrated_df[column_name] = ""
 
-        # 旧表：备注=院校备注，专业备注=页面备注
-        if "院校备注" not in source_columns and "备注" in source_columns:
-            if "专业备注" in source_columns:
-                migrated_df["院校备注"] = existing_df["备注"]
-                migrated_df["备注"] = existing_df["专业备注"]
-            else:
-                migrated_df["备注"] = existing_df["备注"]
+        if "专业备注" in source_columns:
+            migrated_df["备注"] = existing_df["专业备注"]
 
         return migrated_df[RESULT_COLUMNS]
 
@@ -405,13 +469,13 @@ class QuarkMajorsScraper:
 
     def _build_url(self, school_name):
         encoded_school = quote(school_name)
-        jihuaparams = quote(
+        params = quote(
             f'{{"province":"{self.target_province}","year":"{self.target_year}",'
             f'"batch":"{self.target_batch}","genre":"{self.target_genre}"}}'
         )
         return (
             "https://vt.quark.cn/blm/gaokao-college-794/tab"
-            f"?app=fen_shu_xian&university_name={encoded_school}&jihuaparams={jihuaparams}"
+            f"?app=ZhaoShengJiHua&university_name={encoded_school}&params={params}"
         )
 
     def _save_status(self, row_index, status):
@@ -502,7 +566,214 @@ class QuarkMajorsScraper:
         sub_req_text = await self._get_locator_text(
             row.locator(".pc-subtitle-two-margin .qk-paragraph-text")
         )
+        if not sub_req_text:
+            paragraphs = row.locator(".qk-paragraph-text")
+            paragraph_count = await paragraphs.count()
+            for index in range(paragraph_count):
+                text = (await paragraphs.nth(index).inner_text()).strip()
+                if "选科要求" in text:
+                    sub_req_text = text
+                    break
         return self._parse_subject_requirement(sub_req_text)
+
+    async def _get_plan_stat_value(self, row, label):
+        stat_items = row.locator(".content-stats-item")
+        stat_count = await stat_items.count()
+        for index in range(stat_count):
+            stat_item = stat_items.nth(index)
+            label_text = await self._get_locator_text(
+                stat_item.locator(".content-stats-label .qk-paragraph-text")
+            )
+            if label_text != label:
+                continue
+            return await self._get_locator_text(
+                stat_item.locator(".content-stats-value .qk-paragraph-text")
+            )
+        return ""
+
+    async def _get_content_list_fingerprint(self, card):
+        plan_container = card.locator(".pc-zhaosheng")
+        if await plan_container.count() == 0:
+            return ""
+        return await plan_container.first.evaluate(
+            """(container) => {
+                const items = container.querySelectorAll('.content-List-li');
+                return Array.from(items)
+                    .map((item) => (item.textContent || '').trim())
+                    .join('|');
+            }"""
+        )
+
+    async def _wait_for_content_list_change(self, card, previous_fingerprint):
+        deadline = time.monotonic() + MAJOR_GROUP_CHANGE_TIMEOUT_MS / 1000
+        while time.monotonic() < deadline:
+            current_fingerprint = await self._get_content_list_fingerprint(card)
+            if current_fingerprint != previous_fingerprint:
+                await asyncio.sleep(MAJOR_GROUP_CHANGE_DEBOUNCE_SEC)
+                return True
+            await asyncio.sleep(0.1)
+        return False
+
+    async def _wait_for_plan_list_ready(self, card, school_name):
+        """筛选框就绪后，等待专业组「全部」及招生计划列表加载完成。"""
+        all_group_locator = card.locator(
+            f"{MAJOR_GROUP_ITEM_SELECTOR} .qk-paragraph-text",
+            has_text="全部",
+        )
+        deadline = time.monotonic() + PLAN_LIST_READY_TIMEOUT_MS / 1000
+        all_group_ready = False
+
+        while time.monotonic() < deadline:
+            plan_count = await card.locator(PLAN_LIST_SELECTOR).count()
+            if plan_count > 0:
+                return True, ""
+
+            if await self._has_no_local_enrollment_hint(card):
+                return True, ""
+
+            if not all_group_ready and await all_group_locator.count() > 0:
+                if await all_group_locator.first.is_visible():
+                    all_group_ready = True
+
+            await asyncio.sleep(FILTER_VALUE_POLL_INTERVAL)
+
+        plan_count = await card.locator(PLAN_LIST_SELECTOR).count()
+        if plan_count > 0:
+            return True, ""
+
+        if await self._has_no_local_enrollment_hint(card):
+            return True, ""
+
+        if not all_group_ready:
+            return False, "专业组列表未出现"
+
+        return False, "招生计划列表未加载"
+
+    async def _get_major_group_targets(self, card):
+        group_items = card.locator(MAJOR_GROUP_ITEM_SELECTOR)
+        group_count = await group_items.count()
+        if group_count == 0:
+            return []
+
+        targets = []
+        for index in range(group_count):
+            group_name = await self._get_locator_text(
+                group_items.nth(index).locator(".qk-paragraph-text")
+            )
+            if not group_name or group_name == "全部":
+                continue
+            targets.append((index, group_name))
+        return targets
+
+    async def _activate_major_group(self, card, group_index, worker_id, group_name):
+        group_item = card.locator(MAJOR_GROUP_ITEM_SELECTOR).nth(group_index)
+        previous_fingerprint = await self._get_content_list_fingerprint(card)
+        await group_item.click()
+
+        changed = await self._wait_for_content_list_change(card, previous_fingerprint)
+        if not changed:
+            await asyncio.sleep(MAJOR_GROUP_CLICK_SETTLE_SEC)
+            print(
+                f"[W{worker_id}] 【警告】专业组 {group_name} 列表未检测到变化，"
+                f"等待 {MAJOR_GROUP_CLICK_SETTLE_SEC}s 后仍尝试解析"
+            )
+
+        if await self._has_no_local_enrollment_hint(card):
+            parsed_rows = await self._scrape_current_plan_rows(card)
+            if not parsed_rows:
+                return False
+        return True
+
+    async def _parse_plan_major_row(self, row):
+        major_name = await self._get_locator_text(
+            row.locator(".content-List-li-major .qk-paragraph-text")
+        )
+        if not major_name:
+            return None
+
+        remark = await self._get_locator_text(
+            row.locator(".fold-icon .qk-paragraph-text")
+        )
+        plan_count = await self._get_plan_stat_value(row, "25计划")
+        subject_requirement = await self._get_row_subject_requirement(row)
+
+        return {
+            "major_name": major_name,
+            "remark": remark,
+            "plan_count": plan_count,
+            "subject_requirement": subject_requirement,
+        }
+
+    async def _scrape_current_plan_rows(self, card):
+        major_rows = card.locator(PLAN_LIST_SELECTOR)
+        row_count = await major_rows.count()
+        parsed_rows = []
+
+        for index in range(row_count):
+            try:
+                parsed_row = await self._parse_plan_major_row(major_rows.nth(index))
+                if parsed_row:
+                    parsed_rows.append(parsed_row)
+            except Exception as row_err:
+                print(f"解析招生计划单行出错，跳过: {row_err}")
+                continue
+
+        return parsed_rows
+
+    def _sum_plan_count(self, parsed_rows):
+        total = 0
+        has_number = False
+        for row in parsed_rows:
+            plan_count = str(row.get("plan_count", "")).strip()
+            if plan_count.isdigit():
+                total += int(plan_count)
+                has_number = True
+        return str(total) if has_number else ""
+
+    def _build_group_result_row(
+        self,
+        group_name,
+        parsed_rows,
+        filters,
+        school_name,
+        page_school_name,
+        school_info,
+    ):
+        if not parsed_rows:
+            return None
+
+        major_entries = [
+            format_major_plan_entry(
+                row["major_name"], row["remark"], row["plan_count"]
+            )
+            for row in parsed_rows
+        ]
+        subject_requirement = parsed_rows[0].get("subject_requirement", "")
+
+        return [
+            school_name,
+            page_school_name,
+            school_info["主管部门"],
+            school_info["院校省份"],
+            school_info["城市"],
+            school_info["985"],
+            school_info["211"],
+            school_info["双一流"],
+            school_info["类型"],
+            school_info["层次"],
+            school_info["性质"],
+            filters["省份"],
+            filters["批次"],
+            filters["科类"],
+            group_name,
+            subject_requirement,
+            ", ".join(major_entries),
+            "",
+            "",
+            self._sum_plan_count(parsed_rows),
+            "",
+            "",
+        ]
 
     def _log_card_filters(self, filters, stage, school_name):
         def show(value):
@@ -540,13 +811,17 @@ class QuarkMajorsScraper:
         if await no_data.count() == 0:
             return False
 
-        return await no_data.first.evaluate(
-            """(el) => {
-                const style = window.getComputedStyle(el);
-                return style.display === "block"
-                    || el.classList.contains("qk-display-block");
-            }"""
+        if not await no_data.first.is_visible():
+            return False
+
+        hint_text = await self._get_locator_text(
+            no_data.locator(".doudi-title .qk-paragraph-text")
         )
+        if hint_text in NO_ENROLLMENT_HINT_TEXTS:
+            return True
+
+        block_text = await self._get_locator_text(no_data.first)
+        return any(text in block_text for text in NO_ENROLLMENT_HINT_TEXTS)
 
     async def _is_score_loading_visible(self, card):
         loading = card.locator(SCORE_LOADING_SELECTOR)
@@ -659,13 +934,6 @@ class QuarkMajorsScraper:
         if not year_ready:
             return False, year_error_type, year_error, filters
 
-        module_ready, module_error_type, module_error = (
-            await self._wait_for_score_module_settled(card, school_name)
-        )
-        if not module_ready:
-            filters = await self._get_card_filters(card)
-            return False, module_error_type, module_error, filters
-
         for field_name in VALUE_ONLY_FILTERS:
             value_ready, value_error_type, value_error, filters = (
                 await self._wait_for_filter_has_value(card, field_name, school_name)
@@ -673,12 +941,96 @@ class QuarkMajorsScraper:
             if not value_ready:
                 return False, value_error_type, value_error, filters
 
+        module_ready, module_error_type, module_error = (
+            await self._wait_for_score_module_settled(card, school_name)
+        )
+        if not module_ready:
+            filters = await self._get_card_filters(card)
+            return False, module_error_type, module_error, filters
+
         filters = await self._get_card_filters(card)
         self._log_card_filters(filters, "筛选就绪", school_name)
         return True, "", "", filters
 
-    def _get_major_card(self, page):
-        return page.locator(MAJOR_CARD_SELECTOR).first
+    def _get_plan_card(self, page):
+        return page.locator(PLAN_CARD_SELECTOR).first
+
+    async def _get_plan_card_ready_debug(self, card):
+        signal_states = {}
+        for signal in PLAN_CARD_READY_SIGNALS:
+            locator = card.locator(signal)
+            count = await locator.count()
+            visible = count > 0 and await locator.first.is_visible()
+            signal_states[signal] = {"count": count, "visible": visible}
+        return signal_states
+
+    async def _log_plan_card_debug(self, page, school_name, worker_id, stage):
+        card = page.locator(PLAN_CARD_SELECTOR)
+        count = await card.count()
+        details = []
+
+        for index in range(min(count, 3)):
+            item = card.nth(index)
+            info = await item.evaluate(
+                """(el) => {
+                    const style = window.getComputedStyle(el);
+                    const rect = el.getBoundingClientRect();
+                    return {
+                        display: style.display,
+                        visibility: style.visibility,
+                        opacity: style.opacity,
+                        width: rect.width,
+                        height: rect.height,
+                    };
+                }"""
+            )
+            details.append(info)
+
+        signal_states = {}
+        if count > 0:
+            signal_states = await self._get_plan_card_ready_debug(card.first)
+
+        print(
+            f"[W{worker_id}] 【调试】招生计划模块{stage}: {school_name} | "
+            f"选择器={PLAN_CARD_SELECTOR} | 匹配数={count} | 样式={details} | "
+            f"就绪信号={signal_states}"
+        )
+
+    async def _is_plan_card_ready(self, card):
+        if not await card.is_visible():
+            return False
+
+        for signal in PLAN_CARD_READY_SIGNALS:
+            locator = card.locator(signal)
+            if await locator.count() > 0 and await locator.first.is_visible():
+                return True
+
+        box = await card.bounding_box()
+        return bool(
+            box
+            and box.get("width", 0) > 0
+            and box.get("height", 0) > 200
+        )
+
+    async def _wait_for_plan_card(self, page, school_name, worker_id):
+        card = page.locator(PLAN_CARD_SELECTOR)
+
+        try:
+            await card.first.wait_for(
+                state="attached", timeout=PLAN_CARD_READY_TIMEOUT_MS
+            )
+        except PlaywrightTimeoutError:
+            await self._log_plan_card_debug(page, school_name, worker_id, "DOM未挂载")
+            return None
+
+        deadline = time.monotonic() + PLAN_CARD_READY_TIMEOUT_MS / 1000
+        while time.monotonic() < deadline:
+            if await self._is_plan_card_ready(card.first):
+                return card.first
+            await asyncio.sleep(FILTER_VALUE_POLL_INTERVAL)
+
+        await self._log_plan_card_debug(page, school_name, worker_id, "内容区未就绪")
+        return None
 
     async def _has_no_local_enrollment_hint(self, card):
         no_data = card.locator(NO_ENROLLMENT_HINT_SELECTOR)
@@ -690,59 +1042,11 @@ class QuarkMajorsScraper:
         hint_text = await self._get_locator_text(
             no_data.locator(".doudi-title .qk-paragraph-text")
         )
-        if hint_text == NO_ENROLLMENT_HINT_TEXT:
+        if hint_text in NO_ENROLLMENT_HINT_TEXTS:
             return True
 
         block_text = await self._get_locator_text(no_data.first)
-        return NO_ENROLLMENT_HINT_TEXT in block_text
-
-    async def _parse_major_row(
-        self, row, filters, school_name, page_school_name, school_info
-    ):
-        major_name = await self._get_locator_text(
-            row.locator(".content-List-major .qk-paragraph-text")
-        )
-        low_score = await self._get_locator_text(
-            row.locator(".content-List-low_score .qk-paragraph-text")
-        )
-        low_rank = await self._get_locator_text(
-            row.locator(".content-List-low_rank .qk-paragraph-text")
-        )
-        enroll_count = await self._get_locator_text(
-            row.locator(".content-List-luqurenshu .qk-paragraph-text")
-        )
-        score_diff = await self._get_locator_text(
-            row.locator(".content-List-low_score_diff .qk-paragraph-text")
-        )
-        remark = await self._get_locator_text(
-            row.locator(".pc-subtitle-margin .qk-paragraph-text")
-        )
-        subject_requirement = await self._get_row_subject_requirement(row)
-
-        if not major_name:
-            return None
-
-        major_display = merge_major_with_remark(major_name, remark)
-
-        return [
-            school_name,
-            page_school_name,
-            school_info["主管部门"],
-            school_info["所在地"],
-            school_info["办学层次"],
-            school_info["院校备注"],
-            filters["省份"],
-            filters["年份"],
-            filters["批次"],
-            filters["科类"],
-            subject_requirement,
-            major_display,
-            low_score,
-            low_rank,
-            enroll_count,
-            score_diff,
-            remark,
-        ]
+        return any(text in block_text for text in NO_ENROLLMENT_HINT_TEXTS)
 
     async def _scrape_school(self, page, row_index, school_name, worker_id):
         url = self._build_url(school_name)
@@ -772,12 +1076,12 @@ class QuarkMajorsScraper:
                 result_text = "本省未招生"
                 return
 
-            card = self._get_major_card(page)
-            try:
-                await card.wait_for(state="visible", timeout=10000)
-            except PlaywrightTimeoutError:
+            card = await self._wait_for_plan_card(page, school_name, worker_id)
+            if card is None:
                 print(
-                    f"[W{worker_id}] 【失败】未找到专业分数线模块: {school_name}"
+                    f"[W{worker_id}] 【失败】未找到招生计划模块: {school_name} "
+                    f"（等待 {PLAN_CARD_SELECTOR} 挂载且筛选区/列表就绪，"
+                    f"超时 {PLAN_CARD_READY_TIMEOUT_MS}ms）"
                 )
                 await asyncio.sleep(3)
                 self._save_status(row_index, "失败-未加载")
@@ -807,7 +1111,7 @@ class QuarkMajorsScraper:
                     print(
                         f"[W{worker_id}] 【本省未招生】"
                         f"{self.target_province}/{self.target_year} 已就绪，"
-                        f"分数模块 loading 消失后 nodata-fenshuxian 为 display:block: "
+                        f"招生计划模块 loading 消失后 nodata-fenshuxian 为 display:block: "
                         f"{school_name}"
                     )
                     self._save_status(row_index, "本省未招生")
@@ -842,52 +1146,83 @@ class QuarkMajorsScraper:
             print(
                 f"[W{worker_id}] 【成功】{filters['省份']} {filters['年份']} "
                 f"{filters['批次']} {filters['科类']}，"
-                f"页面院校: {page_school_name or '未知'}，开始提取: {school_name}"
+                f"页面院校: {page_school_name or '未知'}，开始提取专业组: {school_name}"
             )
 
-            major_rows = card.locator(".content-List-li")
-            row_count = await major_rows.count()
-            has_no_enrollment_hint = await self._has_no_local_enrollment_hint(card)
-
-            if row_count == 0 and has_no_enrollment_hint:
+            list_ready, list_error = await self._wait_for_plan_list_ready(
+                card, school_name
+            )
+            if not list_ready:
                 print(
-                    f"[W{worker_id}] 【本省未招生】"
-                    f"{self.target_province}/{self.target_year} 下无专业列表，"
-                    f"且出现「{NO_ENROLLMENT_HINT_TEXT}」: {school_name}"
+                    f"[W{worker_id}] 【失败】{list_error}: {school_name}"
                 )
-                self._save_status(row_index, "本省未招生")
-                result_text = "本省未招生"
+                self._save_status(row_index, "失败-未加载")
+                result_text = "失败-未加载"
                 return
 
+            has_no_enrollment_hint = await self._has_no_local_enrollment_hint(card)
+            major_group_targets = await self._get_major_group_targets(card)
             school_info = self._get_school_info(row_index)
-            results = []
             result_rows = []
+            group_summaries = []
 
-            for index in range(row_count):
-                try:
-                    parsed_row = await self._parse_major_row(
-                        major_rows.nth(index),
+            if not major_group_targets:
+                parsed_rows = await self._scrape_current_plan_rows(card)
+                if not parsed_rows and has_no_enrollment_hint:
+                    print(
+                        f"[W{worker_id}] 【本省未招生】"
+                        f"{self.target_province}/{self.target_year} 下无专业组列表，"
+                        f"且出现无数据提示: {school_name}"
+                    )
+                    self._save_status(row_index, "本省未招生")
+                    result_text = "本省未招生"
+                    return
+
+                group_row = self._build_group_result_row(
+                    "",
+                    parsed_rows,
+                    filters,
+                    school_name,
+                    page_school_name,
+                    school_info,
+                )
+                if group_row:
+                    result_rows.append(group_row)
+                    group_summaries.append("默认")
+            else:
+                for group_index, group_name in major_group_targets:
+                    activated = await self._activate_major_group(
+                        card, group_index, worker_id, group_name
+                    )
+                    if not activated:
+                        print(
+                            f"[W{worker_id}] 【跳过】专业组 {group_name} 无数据: "
+                            f"{school_name}"
+                        )
+                        continue
+
+                    parsed_rows = await self._scrape_current_plan_rows(card)
+                    group_row = self._build_group_result_row(
+                        group_name,
+                        parsed_rows,
                         filters,
                         school_name,
                         page_school_name,
                         school_info,
                     )
-                    if not parsed_row:
-                        continue
-                    result_rows.append(parsed_row)
-                    results.append(parsed_row[MAJOR_NAME_INDEX])
-                except Exception as row_err:
-                    print(f"[W{worker_id}] 解析单行出错，跳过: {row_err}")
-                    continue
+                    if group_row:
+                        result_rows.append(group_row)
+                        group_summaries.append(group_name)
 
             self._append_result_rows(result_rows)
 
-            if results:
+            if result_rows:
                 self._save_status(row_index, "成功")
-                result_text = f"成功 {len(results)} 条"
+                result_text = f"成功 {len(result_rows)} 个专业组"
                 print(
                     f"[W{worker_id}] 【成功】{school_name} "
-                    f"共 {len(results)} 条专业"
+                    f"共 {len(result_rows)} 个专业组 "
+                    f"({', '.join(group_summaries)})"
                 )
             else:
                 self._save_status(row_index, "失败-未解析到数据")
@@ -1048,10 +1383,10 @@ class QuarkMajorsScraper:
 if __name__ == "__main__":
     current_dir = os.path.dirname(os.path.abspath(__file__))
 
-    school_source_path = os.path.join(current_dir, "普通高校.xls")
+    school_source_path = os.path.join(current_dir, "普通高校.csv")
     status_save_path = os.path.join(current_dir, "普通高校.csv")
 
-    scraper = QuarkMajorsScraper(
+    scraper = QuarkMajorGroupsScraper(
         school_source_path=school_source_path,
         status_save_path=status_save_path,
         target_province=TARGET_PROVINCE,
