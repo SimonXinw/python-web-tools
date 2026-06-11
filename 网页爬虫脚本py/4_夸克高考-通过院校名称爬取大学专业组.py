@@ -20,7 +20,7 @@ TARGET_GENRE = "首选物理"
 
 # 并发开关：True 时启用多标签页并发；False 时单标签页顺序执行
 ENABLE_CONCURRENT = True
-CONCURRENT_WORKERS = 20
+CONCURRENT_WORKERS = 8
 
 # 状态表落盘：内存更新后由后台定时批量写入，降低 Windows 下 os.replace 冲突
 STATUS_FLUSH_INTERVAL_SEC = 1.0
@@ -123,7 +123,16 @@ PLAN_CARD_READY_TIMEOUT_MS = 20000
 MAJOR_GROUP_ITEM_SELECTOR = ".major-group-list .major-group-item"
 PLAN_LIST_SELECTOR = ".pc-zhaosheng .content-List-li"
 NO_ENROLLMENT_HINT_SELECTOR = ".nodata-fenshuxian"
-NO_ENROLLMENT_HINT_TEXTS = ("该地区暂无专业录取信息", "暂无相关数据")
+NO_ENROLLMENT_HINT_TEXTS = (
+    "该地区暂无专业录取信息",
+    "该地区暂无录取信息",
+    "暂无相关数据",
+)
+PROVINCE_NO_ENROLLMENT_HINT_TEXTS = (
+    "该地区暂无专业录取信息",
+    "该地区暂无录取信息",
+)
+EARLY_NO_ENROLLMENT_POLL_TIMEOUT_MS = 8000
 MAJOR_GROUP_CHANGE_TIMEOUT_MS = 3000
 MAJOR_GROUP_CHANGE_DEBOUNCE_SEC = 0.2
 MAJOR_GROUP_CLICK_SETTLE_SEC = 0.1
@@ -806,22 +815,62 @@ class QuarkMajorGroupsScraper:
 
         return True, "", "", ""
 
-    async def _is_no_enrollment_display_block(self, card):
+    async def _get_no_enrollment_hint_text(self, card):
         no_data = card.locator(NO_ENROLLMENT_HINT_SELECTOR)
         if await no_data.count() == 0:
-            return False
-
+            return ""
         if not await no_data.first.is_visible():
-            return False
+            return ""
 
         hint_text = await self._get_locator_text(
             no_data.locator(".doudi-title .qk-paragraph-text")
         )
-        if hint_text in NO_ENROLLMENT_HINT_TEXTS:
-            return True
+        if hint_text:
+            return hint_text
 
-        block_text = await self._get_locator_text(no_data.first)
-        return any(text in block_text for text in NO_ENROLLMENT_HINT_TEXTS)
+        return await self._get_locator_text(no_data.first)
+
+    def _match_hint_texts(self, hint_text, texts):
+        if not hint_text:
+            return False
+        return any(text in hint_text for text in texts)
+
+    async def _is_province_no_enrollment_hint(self, card):
+        hint_text = await self._get_no_enrollment_hint_text(card)
+        return self._match_hint_texts(hint_text, PROVINCE_NO_ENROLLMENT_HINT_TEXTS)
+
+    async def _has_plan_list_data(self, card):
+        return await card.locator(PLAN_LIST_SELECTOR).count() > 0
+
+    async def _poll_after_province_year_ready(self, card, school_name):
+        """省份/年份就绪后，边等批次科类边检测本省未招生或列表是否已出。"""
+        deadline = time.monotonic() + EARLY_NO_ENROLLMENT_POLL_TIMEOUT_MS / 1000
+
+        while time.monotonic() < deadline:
+            if await self._is_province_no_enrollment_hint(card):
+                filters = await self._get_card_filters(card)
+                self._log_card_filters(
+                    filters, "省份年份就绪后本省未招生", school_name
+                )
+                return "no_enrollment", filters
+
+            filters = await self._get_card_filters(card)
+            batch = str(filters.get("批次", "")).strip()
+            genre = str(filters.get("科类", "")).strip()
+            if batch and genre:
+                return "continue", filters
+
+            if await self._has_plan_list_data(card):
+                return "continue", filters
+
+            await asyncio.sleep(FILTER_VALUE_POLL_INTERVAL)
+
+        filters = await self._get_card_filters(card)
+        return "continue", filters
+
+    async def _is_no_enrollment_display_block(self, card):
+        hint_text = await self._get_no_enrollment_hint_text(card)
+        return self._match_hint_texts(hint_text, NO_ENROLLMENT_HINT_TEXTS)
 
     async def _is_score_loading_visible(self, card):
         loading = card.locator(SCORE_LOADING_SELECTOR)
@@ -872,12 +921,26 @@ class QuarkMajorGroupsScraper:
             return False, "load", f"{field_name}筛选框未出现", filters
 
         for _ in range(FILTER_VALUE_POLL_COUNT):
+            if await self._is_province_no_enrollment_hint(card):
+                filters = await self._get_card_filters(card)
+                self._log_card_filters(
+                    filters, f"{field_name}等待期间本省未招生", school_name
+                )
+                return False, "no_enrollment", "该地区暂无录取信息", filters
+
             filters = await self._get_card_filters(card)
             actual = str(filters.get(field_name, "")).strip()
             if actual:
                 self._log_card_filters(filters, f"{field_name}有值", school_name)
                 return True, "", "", filters
             await asyncio.sleep(FILTER_VALUE_POLL_INTERVAL)
+
+        if await self._is_province_no_enrollment_hint(card):
+            filters = await self._get_card_filters(card)
+            self._log_card_filters(
+                filters, f"{field_name}超时后本省未招生", school_name
+            )
+            return False, "no_enrollment", "该地区暂无录取信息", filters
 
         filters = await self._get_card_filters(card)
         self._log_card_filters(filters, f"{field_name}值未就绪", school_name)
@@ -934,12 +997,23 @@ class QuarkMajorGroupsScraper:
         if not year_ready:
             return False, year_error_type, year_error, filters
 
-        for field_name in VALUE_ONLY_FILTERS:
-            value_ready, value_error_type, value_error, filters = (
-                await self._wait_for_filter_has_value(card, field_name, school_name)
-            )
-            if not value_ready:
-                return False, value_error_type, value_error, filters
+        early_result, filters = await self._poll_after_province_year_ready(
+            card, school_name
+        )
+        if early_result == "no_enrollment":
+            return False, "no_enrollment", "该地区暂无录取信息", filters
+
+        batch = str(filters.get("批次", "")).strip()
+        genre = str(filters.get("科类", "")).strip()
+        if not (batch and genre):
+            for field_name in VALUE_ONLY_FILTERS:
+                value_ready, value_error_type, value_error, filters = (
+                    await self._wait_for_filter_has_value(
+                        card, field_name, school_name
+                    )
+                )
+                if not value_ready:
+                    return False, value_error_type, value_error, filters
 
         module_ready, module_error_type, module_error = (
             await self._wait_for_score_module_settled(card, school_name)
@@ -1033,20 +1107,8 @@ class QuarkMajorGroupsScraper:
         return None
 
     async def _has_no_local_enrollment_hint(self, card):
-        no_data = card.locator(NO_ENROLLMENT_HINT_SELECTOR)
-        if await no_data.count() == 0:
-            return False
-        if not await no_data.first.is_visible():
-            return False
-
-        hint_text = await self._get_locator_text(
-            no_data.locator(".doudi-title .qk-paragraph-text")
-        )
-        if hint_text in NO_ENROLLMENT_HINT_TEXTS:
-            return True
-
-        block_text = await self._get_locator_text(no_data.first)
-        return any(text in block_text for text in NO_ENROLLMENT_HINT_TEXTS)
+        hint_text = await self._get_no_enrollment_hint_text(card)
+        return self._match_hint_texts(hint_text, NO_ENROLLMENT_HINT_TEXTS)
 
     async def _scrape_school(self, page, row_index, school_name, worker_id):
         url = self._build_url(school_name)
@@ -1111,7 +1173,7 @@ class QuarkMajorGroupsScraper:
                     print(
                         f"[W{worker_id}] 【本省未招生】"
                         f"{self.target_province}/{self.target_year} 已就绪，"
-                        f"招生计划模块 loading 消失后 nodata-fenshuxian 为 display:block: "
+                        f"{filter_error or '该地区暂无录取信息'}: "
                         f"{school_name}"
                     )
                     self._save_status(row_index, "本省未招生")
