@@ -13,14 +13,14 @@ from playwright.async_api import (
 )
 
 # 爬取目标（修改此处即可切换省份/年份）
-TARGET_PROVINCE = "湖南"
+TARGET_PROVINCE = "江西"
 TARGET_YEAR = "2025"
 TARGET_BATCH = "本科批"
 TARGET_GENRE = "首选物理"
 
 # 并发开关：True 时启用多标签页并发；False 时单标签页顺序执行
 ENABLE_CONCURRENT = True
-CONCURRENT_WORKERS = 20
+CONCURRENT_WORKERS = 8
 
 # 状态表落盘：内存更新后由后台定时批量写入，降低 Windows 下 os.replace 冲突
 STATUS_FLUSH_INTERVAL_SEC = 1.0
@@ -101,8 +101,11 @@ VALUE_ONLY_FILTERS = ["批次", "科类"]
 SKIP_STATUSES = {"成功", "无效数据", "本省未招生", "失败-无数据"}
 
 MAJOR_CARD_SELECTOR = ".card-padding-zhuanye:has(.qk-title-text:has-text('专业分数线'))"
+MAJOR_LIST_SELECTOR = ".content-List-li"
 NO_ENROLLMENT_HINT_SELECTOR = ".nodata-fenshuxian"
-NO_ENROLLMENT_HINT_TEXT = "该地区暂无专业录取信息"
+NO_ENROLLMENT_SETTLE_SEC = 0.1
+NO_ENROLLMENT_MIN_SIZE_PX = 20
+LIST_CONTENT_READY_TIMEOUT_MS = 10000
 SCORE_LOADING_SELECTOR = ".qk-loading.qk-loading-container"
 SCORE_LOADING_APPEAR_TIMEOUT_MS = 3000
 SCORE_LOADING_DISAPPEAR_TIMEOUT_MS = 8000
@@ -574,17 +577,21 @@ class QuarkMajorsScraper:
 
         return True, "", "", ""
 
-    async def _is_no_enrollment_display_block(self, card):
+    async def _has_major_list_data(self, card):
+        return await card.locator(MAJOR_LIST_SELECTOR).count() > 0
+
+    async def _is_nodata_visually_active(self, card):
+        """nodata 默认 block 但高度为 0；宽高均 > 20px 才表示真正展示出来。"""
         no_data = card.locator(NO_ENROLLMENT_HINT_SELECTOR)
         if await no_data.count() == 0:
             return False
 
         return await no_data.first.evaluate(
-            """(el) => {
-                const style = window.getComputedStyle(el);
-                return style.display === "block"
-                    || el.classList.contains("qk-display-block");
-            }"""
+            f"""(el) => {{
+                const rect = el.getBoundingClientRect();
+                return rect.width > {NO_ENROLLMENT_MIN_SIZE_PX}
+                    && rect.height > {NO_ENROLLMENT_MIN_SIZE_PX};
+            }}"""
         )
 
     async def _is_score_loading_visible(self, card):
@@ -592,6 +599,85 @@ class QuarkMajorsScraper:
         if await loading.count() == 0:
             return False
         return await loading.first.is_visible()
+
+    async def _wait_for_score_loading_hidden(self, card, timeout_ms):
+        loading = card.locator(SCORE_LOADING_SELECTOR)
+        if await loading.count() == 0:
+            return True
+        if not await loading.first.is_visible():
+            return True
+
+        try:
+            await loading.first.wait_for(state="hidden", timeout=timeout_ms)
+            return True
+        except PlaywrightTimeoutError:
+            return False
+
+    async def _wait_loading_gone_then_settle(self, card, timeout_ms):
+        """loading 可见则等到不可见，消失后再等 100ms。"""
+        if not await self._is_score_loading_visible(card):
+            return True
+
+        if not await self._wait_for_score_loading_hidden(card, timeout_ms):
+            return False
+
+        await asyncio.sleep(NO_ENROLLMENT_SETTLE_SEC)
+        return True
+
+    async def _should_early_stop_no_enrollment(self, card):
+        """列表无数据、loading 已消失并 settle、nodata 已展示 → 本省未招生。"""
+        if await self._has_major_list_data(card):
+            return False
+
+        if not await self._wait_loading_gone_then_settle(
+            card, SCORE_LOADING_DISAPPEAR_TIMEOUT_MS
+        ):
+            return False
+
+        if await self._has_major_list_data(card):
+            return False
+
+        return await self._is_nodata_visually_active(card)
+
+    async def _poll_list_or_no_enrollment(self, card, timeout_ms):
+        """
+        轮询列表与 nodata：有列表=有招生；
+        loading 可见则 wait_for(hidden) 后再等 100ms；
+        nodata 宽高>20px 则提前终止。
+        返回 has_data | no_enrollment | timeout
+        """
+        deadline = time.monotonic() + timeout_ms / 1000
+
+        while time.monotonic() < deadline:
+            if await self._has_major_list_data(card):
+                return "has_data"
+
+            remaining_ms = max(1, int((deadline - time.monotonic()) * 1000))
+
+            if await self._is_score_loading_visible(card):
+                if not await self._wait_loading_gone_then_settle(card, remaining_ms):
+                    break
+
+                if await self._has_major_list_data(card):
+                    return "has_data"
+
+                if await self._is_nodata_visually_active(card):
+                    return "no_enrollment"
+
+                continue
+
+            if await self._is_nodata_visually_active(card):
+                return "no_enrollment"
+
+            await asyncio.sleep(NO_ENROLLMENT_SETTLE_SEC)
+
+        if await self._has_major_list_data(card):
+            return "has_data"
+
+        if await self._should_early_stop_no_enrollment(card):
+            return "no_enrollment"
+
+        return "timeout"
 
     async def _wait_for_score_module_settled(self, card, school_name):
         loading = card.locator(SCORE_LOADING_SELECTOR)
@@ -614,10 +700,13 @@ class QuarkMajorsScraper:
         else:
             await asyncio.sleep(0.5)
 
-        if await self._is_no_enrollment_display_block(card):
+        poll_result = await self._poll_list_or_no_enrollment(
+            card, LIST_CONTENT_READY_TIMEOUT_MS
+        )
+        if poll_result == "no_enrollment":
             filters = await self._get_card_filters(card)
             self._log_card_filters(filters, "分数模块加载后nodata显示", school_name)
-            return False, "no_enrollment", "nodata-fenshuxian显示"
+            return False, "no_enrollment", "nodata-fenshuxian已展示"
 
         return True, "", ""
 
@@ -636,12 +725,26 @@ class QuarkMajorsScraper:
             return False, "load", f"{field_name}筛选框未出现", filters
 
         for _ in range(FILTER_VALUE_POLL_COUNT):
+            if await self._should_early_stop_no_enrollment(card):
+                filters = await self._get_card_filters(card)
+                self._log_card_filters(
+                    filters, f"{field_name}等待期间本省未招生", school_name
+                )
+                return False, "no_enrollment", "nodata-fenshuxian已展示", filters
+
             filters = await self._get_card_filters(card)
             actual = str(filters.get(field_name, "")).strip()
             if actual:
                 self._log_card_filters(filters, f"{field_name}有值", school_name)
                 return True, "", "", filters
             await asyncio.sleep(FILTER_VALUE_POLL_INTERVAL)
+
+        if await self._should_early_stop_no_enrollment(card):
+            filters = await self._get_card_filters(card)
+            self._log_card_filters(
+                filters, f"{field_name}超时后本省未招生", school_name
+            )
+            return False, "no_enrollment", "nodata-fenshuxian已展示", filters
 
         filters = await self._get_card_filters(card)
         self._log_card_filters(filters, f"{field_name}值未就绪", school_name)
@@ -720,20 +823,7 @@ class QuarkMajorsScraper:
         return page.locator(MAJOR_CARD_SELECTOR).first
 
     async def _has_no_local_enrollment_hint(self, card):
-        no_data = card.locator(NO_ENROLLMENT_HINT_SELECTOR)
-        if await no_data.count() == 0:
-            return False
-        if not await no_data.first.is_visible():
-            return False
-
-        hint_text = await self._get_locator_text(
-            no_data.locator(".doudi-title .qk-paragraph-text")
-        )
-        if hint_text == NO_ENROLLMENT_HINT_TEXT:
-            return True
-
-        block_text = await self._get_locator_text(no_data.first)
-        return NO_ENROLLMENT_HINT_TEXT in block_text
+        return await self._should_early_stop_no_enrollment(card)
 
     async def _parse_major_row(
         self, row, filters, school_name, page_school_name, school_info
@@ -850,7 +940,7 @@ class QuarkMajorsScraper:
                     print(
                         f"[W{worker_id}] 【本省未招生】"
                         f"{self.target_province}/{self.target_year} 已就绪，"
-                        f"分数模块 loading 消失后 nodata-fenshuxian 为 display:block: "
+                        f"{filter_error or 'nodata-fenshuxian已展示'}: "
                         f"{school_name}"
                     )
                     self._save_status(row_index, "本省未招生")
@@ -888,7 +978,20 @@ class QuarkMajorsScraper:
                 f"页面院校: {page_school_name or '未知'}，开始提取: {school_name}"
             )
 
-            major_rows = card.locator(".content-List-li")
+            list_poll = await self._poll_list_or_no_enrollment(
+                card, LIST_CONTENT_READY_TIMEOUT_MS
+            )
+            if list_poll == "no_enrollment":
+                print(
+                    f"[W{worker_id}] 【本省未招生】"
+                    f"{self.target_province}/{self.target_year} 下无专业列表，"
+                    f"且 nodata 元素已展示: {school_name}"
+                )
+                self._save_status(row_index, "本省未招生")
+                result_text = "本省未招生"
+                return
+
+            major_rows = card.locator(MAJOR_LIST_SELECTOR)
             row_count = await major_rows.count()
             has_no_enrollment_hint = await self._has_no_local_enrollment_hint(card)
 
@@ -896,7 +999,7 @@ class QuarkMajorsScraper:
                 print(
                     f"[W{worker_id}] 【本省未招生】"
                     f"{self.target_province}/{self.target_year} 下无专业列表，"
-                    f"且出现「{NO_ENROLLMENT_HINT_TEXT}」: {school_name}"
+                    f"且 nodata 元素已展示: {school_name}"
                 )
                 self._save_status(row_index, "本省未招生")
                 result_text = "本省未招生"
